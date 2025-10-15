@@ -5,4 +5,7 @@ import com.example.energy.model.Energy;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface BuildingRepository extends JpaRepository<Building, Long> {
+    Building findBuildingById(Object attr0);
+
+    Building findBuildingByName(Object cellValue);
 }

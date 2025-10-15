@@ -20,6 +20,9 @@ public class Meter {
     @Column(nullable = false, unique = true, length = 50)
     private String code;
 
+    @Column(nullable = false, unique = true, length = 50)
+    private String power;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "apartment_id", nullable = false)
     private Apartment apartment;

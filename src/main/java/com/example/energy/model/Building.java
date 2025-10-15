@@ -16,7 +16,14 @@ public class Building {
     private Long id;
 
     @Column(nullable = false, length = 255)
+    private String code;
+
+    @Column(nullable = false, length = 255)
     private String address;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "city_id", nullable = false)
+    private City city;
 
     @Column(length = 100)
     private String name;

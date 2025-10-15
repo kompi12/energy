@@ -29,6 +29,12 @@ public class Apartment {
     @JoinColumn(name = "person_id", nullable = false)
     private Person person;
 
+    @Column(nullable = false, length = 100)
+    private String mbr;
+
+    @Column(nullable = false, length = 100)
+    private String hepMBR;
+
     @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Meter> meters;
 

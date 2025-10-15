@@ -22,6 +22,7 @@ public class Person {
     @Column(nullable = false, length = 100)
     private String lastName;
 
+
     @Column(length = 255)
     private String contact;
 

@@ -1,8 +1,8 @@
 package com.example.energy.controller;
 
-import com.example.energy.model.Person;
+import com.example.energy.model.Building;
 import com.example.energy.response.EnergyResponse;
-import com.example.energy.service.PersonService;
+import com.example.energy.service.BuildingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -10,15 +10,15 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController
-@RequestMapping("/person")
-public class PersonController {
+@RequestMapping("/building")
+public class BuildingController {
 
     @Autowired
-    PersonService personService;
+    BuildingService buildingService;
 
-    public EnergyResponse<List<Person>> getAllPersons() {
+    public EnergyResponse<List<Building>> getAllBuildings() {
         try {
-            List<Person> listOfPeople = personService.findAll();
+            List<Building> listOfPeople = buildingService.findAll();
             return EnergyResponse.success("All people found", listOfPeople);
 
         } catch (Exception exception) {
