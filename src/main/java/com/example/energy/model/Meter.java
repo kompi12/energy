@@ -17,10 +17,10 @@ public class Meter {
     @Column(name = "meter_id")
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 50)
+    @Column( unique = true, length = 50)
     private String code;
 
-    @Column(nullable = false, unique = true, length = 50)
+    @Column( length = 50)
     private String power;
 
     @ManyToOne(fetch = FetchType.LAZY)

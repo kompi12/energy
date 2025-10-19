@@ -1,7 +1,5 @@
 package com.example.energy.model;
 
-import com.example.energy.viewmodel.BuildingViewModel;
-import com.example.energy.viewmodel.MeterViewModel;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -18,7 +16,7 @@ public class Apartment {
     @Column(name = "apartment_id")
     private Long id;
 
-    @Column(name = "apartment_number", nullable = false, length = 20)
+    @Column(name = "apartment_number", length = 20)
     private String apartmentNumber;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -26,13 +24,14 @@ public class Apartment {
     private Building building;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "person_id", nullable = false)
+    @JoinColumn(name = "person_id")
     private Person person;
+
 
     @Column(nullable = false, length = 100)
     private String mbr;
 
-    @Column(nullable = false, length = 100)
+    @Column(length = 100)
     private String hepMBR;
 
     @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
