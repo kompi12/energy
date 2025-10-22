@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="DEBUG">
+    <Appenders>
+        <!-- Console output -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="[%d{yyyy-MM-dd HH:mm:ss}] [%-5p] %c{1} - %m%n"/>
+        </Console>
+
+        <!-- File output -->
+        <File name="FileLogger" fileName="logs/app.log" append="true">
+            <PatternLayout pattern="[%d{yyyy-MM-dd HH:mm:ss}] [%-5p] %c{1} - %m%n"/>
+        </File>
+
+        <!-- Optional: Rolling file (auto rotates logs) -->
+        <!--
+        <RollingFile name="RollingFile" fileName="/var/logs/app.log"
+                     filePattern="/var/logs/app-%d{yyyy-MM-dd}.log.gz">
+            <PatternLayout pattern="[%d{yyyy-MM-dd HH:mm:ss}] [%-5p] %c{1} - %m%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+                <SizeBasedTriggeringPolicy size="10MB"/>
+            </Policies>
+        </RollingFile>
+        -->
+    </Appenders>
+
+    <Loggers>
+        <Root level="info">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="FileLogger"/>
+            <!-- For rolling logs, use <AppenderRef ref="RollingFile"/> -->
+        </Root>
+    </Loggers>
+</Configuration>

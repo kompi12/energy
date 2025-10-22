@@ -34,4 +34,22 @@ public class ImporterController {
 
         }
     }
+
+
+    @PostMapping
+    @RequestMapping("/importDataForMonth")
+    public EnergyResponse importDataForMonth(@RequestParam("file") MultipartFile file) {
+        try {
+            importerService.importDataForMonth(file);
+            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500,"error");
+
+        }
+    }
+
+
+
 }

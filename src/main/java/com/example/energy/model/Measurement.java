@@ -1,11 +1,9 @@
 package com.example.energy.model;
 
-import com.example.energy.viewmodel.MeterViewModel;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.time.LocalDate;
 import java.util.Date;
 
 @Entity
@@ -22,10 +20,26 @@ public class Measurement {
     @JoinColumn(name = "meter_id", nullable = false)
     private Meter meter;
 
-    @Column(name = "month", nullable = false)
-    private Date month;
+    @Column(name = "month", nullable = true)
+    private String month;
 
-    @Column(nullable = false)
+    @Column(name = "year", nullable = true)
+    private String year;
+
+    @Column(name = "day", nullable = true)
+    private String day;
+
+    @Column(nullable = true)
     private Integer value;
+
+    @Column(nullable = true)
+    private Date created;
+
+    @Column(nullable = true)
+    private Date updated;
+
+    //later User createdBy
+    @Column(nullable = true)
+    private String createdBy;
 
 }

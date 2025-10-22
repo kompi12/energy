@@ -34,6 +34,9 @@ public class Apartment {
     @Column(length = 100)
     private String hepMBR;
 
+    @Column
+    private Integer priority;
+
     @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Meter> meters;
 
