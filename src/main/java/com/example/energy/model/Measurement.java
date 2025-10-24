@@ -1,45 +1,52 @@
 package com.example.energy.model;
 
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
-import java.util.Date;
+import java.time.Instant;
+import java.time.LocalDate;
 
 @Entity
-@Getter
-@Setter
+@Table(name = "measurement",
+        uniqueConstraints = @UniqueConstraint(name = "uk_measurement_meter_date",
+                columnNames = {"meter_id", "measure_date"}),
+        indexes = {
+                @Index(name = "ix_measurement_meter", columnList = "meter_id"),
+                @Index(name = "ix_measurement_date", columnList = "measure_date")
+        })
+@Getter @Setter
+@ToString(exclude = "meter")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Measurement {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "measurement_seq")
+    @SequenceGenerator(name = "measurement_seq", sequenceName = "measurement_seq", allocationSize = 50)
     @Column(name = "measurement_id")
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "meter_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "meter_id", nullable = false,
+            foreignKey = @ForeignKey(name = "fk_measurement_meter"))
     private Meter meter;
 
-    @Column(name = "month", nullable = true)
-    private String month;
+    @Column(name = "measure_date", nullable = false)
+    private LocalDate measureDate;
 
-    @Column(name = "year", nullable = true)
-    private String year;
-
-    @Column(name = "day", nullable = true)
-    private String day;
-
-    @Column(nullable = true)
+    @Column(name = "value")
     private Integer value;
 
-    @Column(nullable = true)
-    private Date created;
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
 
-    @Column(nullable = true)
-    private Date updated;
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
 
-    //later User createdBy
-    @Column(nullable = true)
+    @Column(name = "created_by", length = 100)
     private String createdBy;
-
 }

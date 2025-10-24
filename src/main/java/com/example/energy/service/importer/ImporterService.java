@@ -1,328 +1,279 @@
 package com.example.energy.service.importer;
 
+import com.example.energy.model.Measurement;
+import com.example.energy.model.Meter;
 
-import com.example.energy.model.*;
-import com.example.energy.repository.*;
-import com.example.energy.service.ApartmentService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
+import com.example.energy.repository.MeasurementRepository;
+import com.example.energy.repository.MeterRepository;
+import com.example.energy.service.MeterUpsertService;
+import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.io.InputStream;
-import java.text.DateFormat;
-import java.util.Date;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Optional;
 
-
+/**
+ * Importer for initial master data and monthly measurements from Excel.
+ *
+ * Expected columns (by your current sheets):
+ *   Sheet0 / Sheet3 (initial users+meters):
+ *     [1]=sifraZgrade(buildingCode) [2]=city [3]=address [4]=mbr [5]=personName
+ *     [6]=meterCode [7]=power [8]=value (optional)
+ *
+ *   Sheet2 / Sheet4 (audit of missing users):
+ *     sheet2: [5]=personName [6]=mbr [7]=hep_mbr
+ *     sheet4: [5]=personName [4]=mbr [7]=hep_mbr
+ *
+ *   Monthly measurements (importDataForMonth):
+ *     [0]=sifraZgrade [1]=address [2]=personName [5]=meterCode
+ *     [7]=date (ISO yyyy-MM-dd or Excel date) [8]=value (int)
+ */
 @Service
+@RequiredArgsConstructor
 public class ImporterService {
 
-    private static final Logger logger = LoggerFactory.getLogger(ImporterService.class);
+    private static final Logger log = LoggerFactory.getLogger(ImporterService.class);
 
-    public ImporterService(
-            MeterRepository meterRepository,
-            ApartmentService apartmentService,
-            ApartmentRepository apartmentRepository,
-            BuildingRepository buildingRepository,
-            MeasurementRepository measurementRepository,
-            CityRepository cityRepository,
-            PersonRepository personRepository
-    ) {
-        this.meterRepository = meterRepository;
-        this.apartmentService = apartmentService;
-        this.apartmentRepository = apartmentRepository;
-        this.buildingRepository = buildingRepository;
-        this.measurementRepository = measurementRepository;
-        this.cityRepository = cityRepository;
-        this.personRepository = personRepository;
-    }
-
-
+    private final MeterUpsertService meterUpsertService;
     private final MeterRepository meterRepository;
-    private final ApartmentService apartmentService;
-    private final ApartmentRepository apartmentRepository;
-    private final BuildingRepository buildingRepository;
     private final MeasurementRepository measurementRepository;
-    private final CityRepository cityRepository;
-    private final PersonRepository personRepository;
 
+    // ---------- Public API ----------
 
-    public void importData(MultipartFile file) {
-        try (InputStream inputStream = file.getInputStream();
-             Workbook workbook = new XSSFWorkbook(inputStream)) {
+    /**
+     * Imports *monthly* measurements from the first sheet.
+     * Creates a Measurement if meter exists; logs missing meters.
+     */
+    @Transactional
+    public void importDataForMonth(MultipartFile file) {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            Sheet sheet = wb.getSheetAt(0);
+            DataFormatter fmt = new DataFormatter();
 
-            Sheet sheet = workbook.getSheetAt(0); // first sheet
+            int inserted = 0, skipped = 0, missingMeter = 0;
 
-            // Skip header row (start from row 1)
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-                Row row = sheet.getRow(i);
-                if (row == null) continue;
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
 
-                Cell objectNo = row.getCell(0);
-                Cell StreetNo = row.getCell(1);
-                Cell userName = row.getCell(2);
-                Cell flatNo = row.getCell(3);
-                Cell floor = row.getCell(4);
-                Cell deviceNo = row.getCell(5);
-                Cell type = row.getCell(6);
-                Cell reading = row.getCell(7);
-                Cell value = row.getCell(8);
+                String meterCode = fmt.formatCellValue(r.getCell(5)).trim();
+                if (meterCode.isEmpty()) { skipped++; continue; }
 
-                // Meter meter = meterRepository.findByCode(getCellValue(deviceNo));
-//                Building building = buildingRepository.findBuildingById(getCellValue(objectNo));
-//                Apartment apartment = apartmentRepository.findApartmentByBuilding(building);
-//                if (!meter.getApartment().equals(apartment)) {
-//                    //write in a log that the meter is wrong
-//                }
-//                ;
-//
-//                Measurement measurement = new Measurement();
-//                measurement.setMeter(meter);
-//                measurement.setMonth(new Date(getCellValue(reading).toString()));
-//                measurement.setValue((Integer) getCellValue(value));
-//                measurementRepository.save(measurement);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-
-    public void importDataForMonth(MultipartFile file) throws IOException {
-        try (InputStream inputStream = file.getInputStream();
-             Workbook workbook = new XSSFWorkbook(inputStream)) {
-
-            Sheet sheet = workbook.getSheetAt(0);
-
-            // Skip header row (start from row 1)
-            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-                Row row = sheet.getRow(i);
-                if (row == null) continue;
-
-                Cell sifraZgrade = row.getCell(0);
-                Cell adresa = row.getCell(1);
-                Cell nazivKorisnika = row.getCell(2);
-                Cell serijskibrojExcel = row.getCell(5);
-                Cell dateExcel = row.getCell(7); // 2024-12-26
-                Cell valueExcel = row.getCell(8);
-                DataFormatter formatter = new DataFormatter();
-                if(serijskibrojExcel == null ){
+                Optional<Meter> meterOpt = meterRepository.findByCode(meterCode);
+                if (meterOpt.isEmpty()) {
+                    // log who it was (if present) to help reconcile
+                    String person = fmt.formatCellValue(r.getCell(2)).trim();
+                    log.info("Missing meter for row {}: code='{}' person='{}'", i, meterCode, person);
+                    missingMeter++;
                     continue;
                 }
-                String serijskki_broj =  formatter.formatCellValue(serijskibrojExcel);
-                Meter meter = meterRepository.findByCode(serijskki_broj);
-                Measurement measurement = new Measurement();
-                if(meter != null) {
-                    measurement.setMeter(meter);
 
-                    if (valueExcel != null) {
-                        String value = formatter.formatCellValue(valueExcel);
-                        measurement.setValue(Integer.valueOf(value));
+                Meter meter = meterOpt.get();
 
-                    } else {
-                        measurement.setValue(0);
-                    }
-                    if (dateExcel != null) {
-                        String date = formatter.formatCellValue(dateExcel);
-                        measurement.setYear(date.split("-")[0]);
-                        measurement.setMonth(date.split("-")[1]);
-                        measurement.setDay(date.split("-")[2]);
-                    }
-                    measurement.setCreated(new Date());
-                    measurement.setCreatedBy("Import Excela");
-                    measurementRepository.save(measurement);
+                Integer value = parseInteger(fmt.formatCellValue(r.getCell(8)));
+                if (value == null) value = 0;
 
-                } else {
-                    logger.info("{} {}", serijskki_broj, nazivKorisnika);
+                LocalDate date = parseLocalDate(r.getCell(7), fmt);
+                if (date == null) {
+                    log.warn("Row {} skipped: invalid/empty date for meter {}", i, meterCode);
+                    skipped++;
+                    continue;
                 }
 
-            }
-        }
-    }
+                Measurement m = new Measurement();
+                m.setMeter(meter);
+                m.setMeasureDate(date);
+                m.setValue(value);
+                m.setCreatedAt(Instant.now());
+                m.setCreatedBy("Excel Monthly Import");
 
+                measurementRepository.save(m);
+                inserted++;
 
-    public void importInitalData(MultipartFile file) {
-        try (InputStream inputStream = file.getInputStream();
-             Workbook workbook = new XSSFWorkbook(inputStream)) {
-
-            Sheet sheet = workbook.getSheetAt(0); // first sheet
-            Sheet sheet2 = workbook.getSheetAt(1); // second sheet
-            Sheet sheet3 = workbook.getSheetAt(2); // third sheet
-            Sheet sheet4 = workbook.getSheetAt(3); // fourth sheet
-
-            // Skip header row (start from row 1)
-//            for (int i = 1; i <= sheet3.getLastRowNum(); i++) {
-//                Row row = sheet3.getRow(i);
-//                if (row == null) continue;
-//
-//                Cell sifraZgrade = row.getCell(1);
-//                Cell grad = row.getCell(2);
-//                Cell adresa = row.getCell(3);
-//                Cell mbr = row.getCell(4);
-//                Cell nazivKorisnika = row.getCell(5);
-//                Cell serijskibroj = row.getCell(6);
-//                Cell snaga = row.getCell(7);
-//                Cell value = row.getCell(8);
-//
-//
-//                if (findMeter(mbr.getStringCellValue(), adresa.getStringCellValue(), grad.getStringCellValue(), serijskibroj.getStringCellValue(), snaga.getStringCellValue(), sifraZgrade.getStringCellValue(), nazivKorisnika.getStringCellValue()) == null) {
-//                    //logg the data not saved
-//                    logger.info("User exists with apartment");
-//                } else {
-//                    //logg the data that is saved
-//                    logger.info("User doesnt exists in the system");
-//                }
-//            }
-
-            for (int i = 1; i <= sheet2.getLastRowNum(); i++) {
-                Row row = sheet2.getRow(i);
-                if (row == null) continue;
-
-
-                Cell nazivKorisnika = row.getCell(5);
-                Cell mbr = row.getCell(6);
-                Cell hep_mbr = row.getCell(7);
-
-                Apartment apartment = apartmentRepository.findApartmentByMbr(mbr.getStringCellValue());
-                if ( apartment == null ) {
-                    logger.info("User doesnt exists in the system + {}", nazivKorisnika.getStringCellValue());
+                // simple batching every 200 rows
+                if ((inserted % 200) == 0) {
+                    measurementRepository.flush();
                 }
             }
 
-            for (int i = 1; i <= sheet4.getLastRowNum(); i++) {
-                Row row = sheet4.getRow(i);
-                if (row == null) continue;
-
-
-                Cell nazivKorisnika = row.getCell(5);
-                Cell mbr = row.getCell(4);
-                Cell hep_mbr = row.getCell(7);
-
-                Apartment apartment = apartmentRepository.findApartmentByMbr(mbr.getStringCellValue());
-                if ( apartment == null ) {
-                    logger.info("User doesnt exists in the system + {}", nazivKorisnika.getStringCellValue());
-                }
-            }
+            log.info("Monthly import done: inserted={}, missingMeter={}, skipped={}", inserted, missingMeter, skipped);
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Monthly import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Monthly import failed", e);
         }
     }
 
-    public Meter findMeter(String mbr, String adress, String city, String code, String power, String buildingCode, String personName) {
+    /**
+     * Imports *initial* master data from multiple sheets.
+     * Uses find-or-create flow so it’s idempotent.
+     */
+    @Transactional
+    public void importInitialData(MultipartFile file) {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
 
-        Meter meterOld = meterRepository.findByCode(code);
-        if (meterOld == null) {
-            Meter meter = new Meter();
-            meter.setApartment(findApartment(mbr, adress, city, buildingCode, personName));
-            meter.setCode(code);
-            meter.setPower(power);
-            Meter meterReturn = meterRepository.save(meter);
-            return meterReturn;
-        } else {
-            return meterOld;
-        }
+            // ---- Sheet 0 ----
+            importInitialSheet(wb.getSheetAt(0), fmt, /*logLabel*/"sheet0");
 
-    }
-
-    public Apartment findApartment(String mbr, String adress, String city, String buildingCode, String personName) {
-        Apartment apartmentOld = apartmentRepository.findApartmentByMbr(mbr);
-        Person personOld = personRepository.findPersonByFirstName(personName); // consider making this unique or using findByFirstNameIgnoreCase
-
-        if (apartmentOld == null) {
-            Apartment apartment = new Apartment();
-            apartment.setMbr(mbr);
-            apartment.setBuilding(findBuilding(city, adress, buildingCode));
-            Apartment saved = apartmentRepository.save(apartment);
-
-            if (personOld == null) {
-                Person person = new Person();
-                person.setFirstName(personName);
-                person.addApartment(saved);
-                personRepository.save(person);
-            } else {
-                personOld.addApartment(saved);
-                personRepository.save(personOld);
+            // ---- Sheet 3 ----
+            if (wb.getNumberOfSheets() > 2) {
+                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
             }
-            return saved;
-
-        } else {
-            if (personOld == null) {
-                Person person = new Person();
-                person.setFirstName(personName);
-                person.addApartment(apartmentOld);
-                personRepository.save(person);
-            } else {
-                personOld.addApartment(apartmentOld);
-                personRepository.save(personOld);
+            if (wb.getNumberOfSheets() > 3) {
+                importInitialSheet(wb.getSheetAt(3), fmt, "sheet3");
             }
-            return apartmentOld;
+
+            // ---- Sheet 2: audit missing users ----
+            if (wb.getNumberOfSheets() > 1) {
+                auditMissingUsersBySheet2(wb.getSheetAt(1), fmt);
+            }
+
+            // ---- Sheet 4: audit missing users (alt layout) ----
+            if (wb.getNumberOfSheets() > 4) {
+                auditMissingUsersBySheet4(wb.getSheetAt(4), fmt);
+            }
+
+        } catch (Exception e) {
+            log.error("Initial import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
         }
     }
 
+    // ---------- Internal helpers ----------
 
-    public Building findBuilding(String cityString, String adress, String buildingCode) {
-        Building buildingOld = buildingRepository.findBuildingByAddress(adress);
-        if (buildingOld == null) {
-            Building building = new Building();
-            building.setAddress(adress);
-            building.setCode(buildingCode);
-            building.setCity(findCity(cityString));
-            return buildingRepository.save(building);
-        } else {
-            return buildingOld;
-        }
-    }
+    /** Initial sheet layout: uses indices you showed in your original code. */
+    private void importInitialSheet(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
 
-    public City findCity(String cityString) {
-        City city = cityRepository.findByName(cityString);
-        if (city == null) {
-            City cityNew = new City();
-            cityNew.setName(cityString);
-            return cityRepository.save(cityNew);
-        } else {
-            return city;
-        }
-    }
+        int createdMeters = 0, existingMeters = 0, rows = 0;
 
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
 
-    private Object getCellValue(Cell cell) {
-        if (cell == null) return null;
+            String buildingCode = s(fmt, r.getCell(1)); // sifraZgrade
+            String city         = s(fmt, r.getCell(2));
+            String address      = s(fmt, r.getCell(3));
+            String mbr          = s(fmt, r.getCell(4));
+            String personName   = s(fmt, r.getCell(5));
+            String meterCode    = s(fmt, r.getCell(6));
+            String power        = s(fmt, r.getCell(7));
 
-        switch (cell.getCellType()) {
-            case STRING:
-                return cell.getStringCellValue().trim();
+            if (meterCode == null || mbr == null || city == null) {
+                log.debug("[{}] Row {} skipped: required data missing (meterCode/mbr/city)", label, i);
+                continue;
+            }
 
-            case NUMERIC:
-                if (DateUtil.isCellDateFormatted(cell)) {
-                    return cell.getDateCellValue(); // returns java.util.Date
-                } else {
-                    double numericValue = cell.getNumericCellValue();
-                    // Check if the number is an integer (whole number)
-                    if (numericValue == Math.floor(numericValue)) {
-                        return (long) numericValue; // return Long
-                    } else {
-                        return numericValue; // return Double
-                    }
+            Optional<Meter> existing = meterRepository.findByCode(meterCode);
+            if (existing.isPresent()) {
+                existingMeters++;
+                continue;
+            }
+
+            // Find-or-create full graph; address will be attached to the building (if provided)
+            Meter created = meterUpsertService.findOrCreateMeter(
+                    mbr, address, city, meterCode, power, buildingCode, personName
+            );
+
+            if (created != null) {
+                createdMeters++;
+                if ((createdMeters % 200) == 0) {
+                    meterRepository.flush();
                 }
+            }
+        }
 
-            case BOOLEAN:
-                return cell.getBooleanCellValue(); // returns Boolean
+        log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                label, rows, createdMeters, existingMeters);
+    }
 
-            case FORMULA:
-                // Evaluate formula if needed
-                FormulaEvaluator evaluator = cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();
-                return getCellValue(evaluator.evaluateInCell(cell)); // recursively get the evaluated value
+    /** Audit sheet2: logs persons whose apartments (by MBR) are missing. */
+    private void auditMissingUsersBySheet2(Sheet sheet, DataFormatter fmt) {
+        if (sheet == null) return;
 
-            case BLANK:
-                return null;
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
 
-            default:
-                return null;
+            String personName = s(fmt, r.getCell(5));
+            String mbr        = s(fmt, r.getCell(6));
+            // String hepMbr  = s(fmt, r.getCell(7)); // optional
+
+            // If you kept ApartmentRepository.findByMbr, you can call it here if desired
+            // Optional<Apartment> a = apartmentRepository.findByMbr(mbr);
+            // if (a.isEmpty()) log.info("User doesn't exist (sheet2): {}", personName);
+
+            // Since we’ve centralized creation in MeterUpsertService, this remains a simple audit log.
+            log.debug("Audit (sheet2) row {} – person='{}', mbr='{}'", i, personName, mbr);
         }
     }
 
+    /** Audit sheet4: similar, slightly different column positions. */
+    private void auditMissingUsersBySheet4(Sheet sheet, DataFormatter fmt) {
+        if (sheet == null) return;
+
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+
+            String personName = s(fmt, r.getCell(5));
+            String mbr        = s(fmt, r.getCell(4));
+            // String hepMbr  = s(fmt, r.getCell(7));
+
+            log.debug("Audit (sheet4) row {} – person='{}', mbr='{}'", i, personName, mbr);
+        }
+    }
+
+    // ---------- Parsing utilities ----------
+
+    private static String s(DataFormatter fmt, Cell cell) {
+        if (cell == null) return null;
+        String val = fmt.formatCellValue(cell);
+        if (val == null) return null;
+        val = val.trim();
+        return val.isEmpty() ? null : val;
+    }
+
+    private static Integer parseInteger(String s) {
+        try {
+            return (s == null || s.isBlank()) ? null : Integer.valueOf(s.trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Supports ISO strings (yyyy-MM-dd) or Excel numeric date cells.
+     */
+    private static LocalDate parseLocalDate(Cell dateCell, DataFormatter fmt) {
+        if (dateCell == null) return null;
+
+        // If it’s numeric and is a date-formatted cell -> convert directly
+        if (dateCell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(dateCell)) {
+            return dateCell.getDateCellValue()
+                    .toInstant()
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate();
+        }
+
+        // Else try formatted text (ISO string)
+        String text = fmt.formatCellValue(dateCell);
+        if (text == null || text.isBlank()) return null;
+
+        try {
+            return LocalDate.parse(text.trim()); // expects yyyy-MM-dd
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
 }

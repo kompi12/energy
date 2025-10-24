@@ -5,8 +5,8 @@ import com.example.energy.model.Building;
 import com.example.energy.model.Energy;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface ApartmentRepository extends JpaRepository<Apartment, Long> {
-    Apartment findApartmentByBuilding(Building building);
+import java.util.Optional;
 
-    Apartment findApartmentByMbr(String stringCellValue);
+public interface ApartmentRepository extends JpaRepository<Apartment, Long> {
+    Optional<Apartment> findByMbr(String mbr);
 }

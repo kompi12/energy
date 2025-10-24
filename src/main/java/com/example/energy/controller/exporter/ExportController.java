@@ -23,7 +23,7 @@ public class ExportController {
     @RequestMapping("/importExcelData")
     public EnergyResponse importData(@RequestParam("file") MultipartFile file) {
         try {
-            exportService.importInitalData(file);
+            //exportService.importInitalData(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
         } catch(Exception ex) {

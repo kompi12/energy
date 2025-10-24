@@ -1,32 +1,37 @@
 package com.example.energy.model;
 
-import com.example.energy.model.Apartment;
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Getter
-@Setter
+@Table(name = "person",
+        indexes = @Index(name = "ix_person_last_first", columnList = "last_name, first_name"))
+@Getter @Setter
+@ToString(exclude = "apartments")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Person {
+
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "person_seq")
+    @SequenceGenerator(name = "person_seq", sequenceName = "person_seq", allocationSize = 50)
     @Column(name = "person_id")
     private Long id;
 
-    @Column(nullable = false, length = 100)
+    @Column(name = "first_name", nullable = false, length = 100)
     private String firstName;
 
-    @Column(length = 100)
+    @Column(name = "last_name", length = 100)
     private String lastName;
 
-    @Column(length = 255)
+    @Column(name = "contact", length = 255)
     private String contact;
 
     @OneToMany(mappedBy = "person", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Apartment> apartments = new java.util.ArrayList<>();
+    private List<Apartment> apartments = new ArrayList<>();
 
     public void addApartment(Apartment a) {
         if (a == null) return;
@@ -34,11 +39,5 @@ public class Person {
             apartments.add(a);
             a.setPerson(this);
         }
-    }
-
-    public void removeApartment(Apartment a) {
-        if (a == null) return;
-        apartments.remove(a);
-        a.setPerson(null);
     }
 }

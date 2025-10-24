@@ -1,5 +1,8 @@
 package com.example.energy.controller.importer;
 
+import com.example.energy.model.City;
+import com.example.energy.model.Meter;
+import com.example.energy.repository.CityRepository;
 import com.example.energy.repository.MeterRepository;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.importer.ImporterService;
@@ -10,12 +13,18 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
+import java.util.Optional;
+
 @RestController
 @RequestMapping("/import")
 public class ImporterController {
 
-    public ImporterController(ImporterService importerService) {
+    private final CityRepository cityRepository;
+
+    public ImporterController(ImporterService importerService, CityRepository cityRepository) {
         this.importerService = importerService;
+        this.cityRepository = cityRepository;
     }
 
 
@@ -25,7 +34,9 @@ public class ImporterController {
     @RequestMapping("/importExcelData")
     public EnergyResponse importData(@RequestParam("file") MultipartFile file) {
         try {
-            importerService.importInitalData(file);
+            Optional<City> city = cityRepository.findByNameIgnoreCase("Osijek");
+            List<City> citys= cityRepository.findAll();
+            importerService.importInitialData(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
         } catch(Exception ex) {
