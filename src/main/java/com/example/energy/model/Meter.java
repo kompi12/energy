@@ -32,6 +32,9 @@ public class Meter {
             foreignKey = @ForeignKey(name = "fk_meter_apartment"))
     private Apartment apartment;
 
+    @Column(name = "active")
+    private boolean active;
+
     @OneToMany(mappedBy = "meter", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Measurement> measurements;
 }

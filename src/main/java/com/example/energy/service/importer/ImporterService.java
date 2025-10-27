@@ -116,31 +116,30 @@ public class ImporterService {
      * Imports *initial* master data from multiple sheets.
      * Uses find-or-create flow so it’s idempotent.
      */
-    @Transactional
     public void importInitialData(MultipartFile file) {
         try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
             DataFormatter fmt = new DataFormatter();
 
             // ---- Sheet 0 ----
-            importInitialSheet(wb.getSheetAt(0), fmt, /*logLabel*/"sheet0");
+       //     importInitialSheet(wb.getSheetAt(0), fmt, /*logLabel*/"sheet0");
 
             // ---- Sheet 3 ----
             if (wb.getNumberOfSheets() > 2) {
                 importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
             }
-            if (wb.getNumberOfSheets() > 3) {
-                importInitialSheet(wb.getSheetAt(3), fmt, "sheet3");
-            }
-
-            // ---- Sheet 2: audit missing users ----
-            if (wb.getNumberOfSheets() > 1) {
-                auditMissingUsersBySheet2(wb.getSheetAt(1), fmt);
-            }
-
-            // ---- Sheet 4: audit missing users (alt layout) ----
-            if (wb.getNumberOfSheets() > 4) {
-                auditMissingUsersBySheet4(wb.getSheetAt(4), fmt);
-            }
+//            if (wb.getNumberOfSheets() > 2) {
+//                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
+//            }
+//
+//            // ---- Sheet 2: audit missing users ----
+//            if (wb.getNumberOfSheets() > 1) {
+//                auditMissingUsersBySheet2(wb.getSheetAt(1), fmt);
+//            }
+//
+//            // ---- Sheet 4: audit missing users (alt layout) ----
+//            if (wb.getNumberOfSheets() > 3) {
+//                auditMissingUsersBySheet4(wb.getSheetAt(3), fmt);
+//            }
 
         } catch (Exception e) {
             log.error("Initial import failed: {}", e.getMessage(), e);
@@ -156,7 +155,7 @@ public class ImporterService {
 
         int createdMeters = 0, existingMeters = 0, rows = 0;
 
-        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+        for (int i = 1500; i <= sheet.getLastRowNum(); i++) {
             Row r = sheet.getRow(i);
             if (r == null) continue;
             rows++;
