@@ -1,10 +1,14 @@
 package com.example.energy.service.importer;
 
+import com.example.energy.model.Apartment;
 import com.example.energy.model.Measurement;
 import com.example.energy.model.Meter;
 
+import com.example.energy.repository.ApartmentRepository;
 import com.example.energy.repository.MeasurementRepository;
 import com.example.energy.repository.MeterRepository;
+import com.example.energy.service.MeasurementService;
+import com.example.energy.service.MeasurementUpsertService;
 import com.example.energy.service.MeterUpsertService;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
@@ -14,11 +18,21 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import java.io.InputStream;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -46,6 +60,9 @@ public class ImporterService {
     private final MeterUpsertService meterUpsertService;
     private final MeterRepository meterRepository;
     private final MeasurementRepository measurementRepository;
+    private final ApartmentRepository apartmentRepository;
+    private final MeasurementService measurementService;
+    private final MeasurementUpsertService measurementUpsertService;
 
     // ---------- Public API ----------
 
@@ -53,7 +70,6 @@ public class ImporterService {
      * Imports *monthly* measurements from the first sheet.
      * Creates a Measurement if meter exists; logs missing meters.
      */
-    @Transactional
     public void importDataForMonth(MultipartFile file) {
         try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
             Sheet sheet = wb.getSheetAt(0);
@@ -121,12 +137,12 @@ public class ImporterService {
             DataFormatter fmt = new DataFormatter();
 
             // ---- Sheet 0 ----
-       //     importInitialSheet(wb.getSheetAt(0), fmt, /*logLabel*/"sheet0");
+            importInitialSheetAll(wb.getSheetAt(0), fmt, /*logLabel*/"sheet2");
 
             // ---- Sheet 3 ----
-            if (wb.getNumberOfSheets() > 2) {
-                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
-            }
+//            if (wb.getNumberOfSheets() > 2) {
+//                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
+//            }
 //            if (wb.getNumberOfSheets() > 2) {
 //                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
 //            }
@@ -155,7 +171,7 @@ public class ImporterService {
 
         int createdMeters = 0, existingMeters = 0, rows = 0;
 
-        for (int i = 1500; i <= sheet.getLastRowNum(); i++) {
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
             Row r = sheet.getRow(i);
             if (r == null) continue;
             rows++;
@@ -181,7 +197,59 @@ public class ImporterService {
 
             // Find-or-create full graph; address will be attached to the building (if provided)
             Meter created = meterUpsertService.findOrCreateMeter(
-                    mbr, address, city, meterCode, power, buildingCode, personName
+                    mbr, address, city, meterCode, power, buildingCode, personName,""
+            );
+
+            if (created != null) {
+                createdMeters++;
+                if ((createdMeters % 200) == 0) {
+                    meterRepository.flush();
+                }
+            }
+        }
+
+        log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                label, rows, createdMeters, existingMeters);
+    }
+
+
+
+    private void importInitialSheetAll(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
+
+        int createdMeters = 0, existingMeters = 0, rows = 0;
+
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
+
+            String buildingCode = s(fmt, r.getCell(1)); // sifraZgrade
+            String city         = "Zagreb";
+            String address      = s(fmt, r.getCell(0));
+            //String mbr          = s(fmt, r.getCell(4));
+            String personName   = s(fmt, r.getCell(2));
+            String siemensSN = s(fmt, r.getCell(3));
+            String meterCode    = s(fmt, r.getCell(5));
+            String power        = s(fmt, r.getCell(6));
+
+            if (meterCode == null  || city == null || siemensSN == null) {
+                log.debug("[{}] Row {} skipped: required data missing (meterCode/mbr/city)", label, i);
+                continue;
+            }
+
+            Optional<Meter> existing = meterRepository.findByCode(meterCode);
+            if(siemensSN == null || siemensSN.isEmpty()) {
+                if (existing.isPresent()) {
+                    existingMeters++;
+                    continue;
+                }
+
+            }
+
+            // Find-or-create full graph; address will be attached to the building (if provided)
+            Meter created = meterUpsertService.findOrCreateMeter(
+                    null, address, city, meterCode, power, buildingCode, personName,siemensSN
             );
 
             if (created != null) {
@@ -274,5 +342,169 @@ public class ImporterService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+
+
+    public void importSequence(MultipartFile file) {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
+
+            importInitialSheetSequence(wb.getSheetAt(0), fmt, /*logLabel*/"sheet0");
+
+
+        } catch (Exception e) {
+            log.error("import sequence failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
+
+
+    private void importInitialSheetSequence(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
+
+        int updatedMeters = 0, existingMeters = 0, rows = 0;
+
+        for (int i = 2498; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
+
+            String seq = s(fmt, r.getCell(4));
+            String naziv         = s(fmt, r.getCell(5));
+            String mbr      = s(fmt, r.getCell(6));
+            String hep_mbr          = s(fmt, r.getCell(7));
+
+            if(seq == null || mbr == null || hep_mbr == null) {
+                log.info("Missing for  import hep_mbr = {}, seq={}, mbr={}",
+                        seq, mbr, hep_mbr);
+                continue;
+            }
+
+            Optional<Apartment> apartment = apartmentRepository.findByMbr(mbr);
+            if(apartment.isPresent()) {
+                apartment.get().setSequence(Integer.valueOf(seq));
+                apartment.get().setHepMBR(hep_mbr);
+                apartmentRepository.save(apartment.get());
+                updatedMeters++;
+            }
+
+
+        }
+
+        log.info("Initial import [{}]: rows={}, createdMeters={}",
+                label, rows, updatedMeters);
+    }
+
+
+
+
+    public void importXML(MultipartFile file) {
+        int createdMeasurements = 0;
+
+        try (InputStream is = file.getInputStream()) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+                Element measuredev = (Element) measuredevList.item(i);
+                String nr = measuredev.getAttribute("nr");
+
+                String fabnr = safeGetText(measuredev, "fabnr");
+                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+
+                // Build datetime candidate: prefer datapoint dimension="datetime", else combine <date> + <time>
+                String datetimeCandidate = null;
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if ("datetime".equalsIgnoreCase(dim)) {
+                        datetimeCandidate = safeGetText(dp, "value"); // e.g. "26.10.25 16:01:00"
+                        break;
+                    }
+                }
+                if (datetimeCandidate == null) {
+                    String xmlDate = safeGetText(measuredev, "date"); // e.g. "26.10.25"
+                    String xmlTime = safeGetText(measuredev, "time"); // e.g. "16:01:00"
+                    if (!xmlDate.isEmpty()) {
+                        datetimeCandidate = xmlTime.isEmpty() ? xmlDate : (xmlDate + " " + xmlTime);
+                    }
+                }
+                String isoDatetime = parseToIso(datetimeCandidate); // may be null if can't parse
+
+                // Only process the SECOND datapoint (index 1)
+                if (datapoints.getLength() < 2) {
+                    continue;
+                }
+                Element secondDp = (Element) datapoints.item(1);
+                String secondValue = safeGetText(secondDp, "value");
+                String secondDimension = safeGetText(secondDp, "dimension");
+
+                // Skip placeholder/error values
+                if (secondValue == null || secondValue.trim().isEmpty() || secondValue.contains("--.--.--")) {
+                    continue;
+                }
+
+                // Choose identifier: prefer identnr, fallback to fabnr
+                String deviceId = identnr.isEmpty() ? fabnr : identnr;
+
+                // Call your upsert. Keep signature as-is (String isoDatetime) or refactor to accept LocalDate/LocalDateTime.
+                Measurement measurement = measurementUpsertService.createMeasurement(isoDatetime, secondValue, deviceId);
+                if (measurement != null) {
+                    createdMeasurements++;
+                }
+            }
+
+            log.info("Imported: createdMeasurements={}", createdMeasurements);
+        } catch (Exception e) {
+            log.error("Import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Import failed", e);
+        }
+    }
+
+    private String safeGetText(Element parent, String tagName) {
+        NodeList nl = parent.getElementsByTagName(tagName);
+        if (nl == null || nl.getLength() == 0 || nl.item(0) == null) return "";
+        String txt = nl.item(0).getTextContent();
+        return txt == null ? "" : txt.trim();
+    }
+
+    private static String parseToIso(String input) {
+        if (input == null || input.isBlank()) return null;
+
+        // Try: "dd.MM.yy HH:mm:ss"
+        DateTimeFormatter dtFormatter1 = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm:ss", Locale.ENGLISH);
+        // Try: "dd.MM.yy"
+        DateTimeFormatter dFormatter = DateTimeFormatter.ofPattern("dd.MM.yy", Locale.ENGLISH);
+
+        try {
+            if (input.contains(" ")) {
+                LocalDateTime ldt = LocalDateTime.parse(input, dtFormatter1);
+                return ldt.toString(); // ISO_LOCAL_DATE_TIME
+            } else {
+                LocalDate ld = LocalDate.parse(input, dFormatter);
+                return ld.toString(); // ISO_LOCAL_DATE
+            }
+        } catch (DateTimeParseException ex) {
+            // Try a slightly different pattern (maybe 4-digit year or different separators)
+            try {
+                DateTimeFormatter dtFormatter2 = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.ENGLISH);
+                if (input.contains(" ")) {
+                    LocalDateTime ldt = LocalDateTime.parse(input, dtFormatter2);
+                    return ldt.toString();
+                }
+            } catch (DateTimeParseException e2) {
+                // As a last resort, return the raw input (or null) so the service can decide
+                return input;
+            }
+        }
+        return input;
     }
 }

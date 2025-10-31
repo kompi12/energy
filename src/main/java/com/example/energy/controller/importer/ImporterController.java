@@ -34,9 +34,22 @@ public class ImporterController {
     @RequestMapping("/importExcelData")
     public EnergyResponse importData(@RequestParam("file") MultipartFile file) {
         try {
-            Optional<City> city = cityRepository.findByNameIgnoreCase("Osijek");
-            List<City> citys= cityRepository.findAll();
             importerService.importInitialData(file);
+            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500,"error");
+
+        }
+    }
+
+
+    @PostMapping
+    @RequestMapping("/importSequence")
+    public EnergyResponse importSequence(@RequestParam("file") MultipartFile file) {
+        try {
+            importerService.importSequence(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
         } catch(Exception ex) {
@@ -52,6 +65,24 @@ public class ImporterController {
     public EnergyResponse importDataForMonth(@RequestParam("file") MultipartFile file) {
         try {
             importerService.importDataForMonth(file);
+            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500,"error");
+
+        }
+    }
+
+
+    @PostMapping
+    @RequestMapping("/importXML")
+    public EnergyResponse importXML(@RequestParam("file") MultipartFile file) {
+        try {
+            if (file == null || file.isEmpty()) {
+                return EnergyResponse.error(500,"No file added");
+            }
+            importerService.importXML(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
         } catch(Exception ex) {

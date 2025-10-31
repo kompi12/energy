@@ -7,8 +7,6 @@ import java.util.List;
 
 @Entity
 @Table(name = "apartment",
-        uniqueConstraints = @UniqueConstraint(name = "uk_apartment_building_number",
-                columnNames = {"building_id", "apartment_number"}),
         indexes = {
                 @Index(name = "ix_apartment_building", columnList = "building_id"),
                 @Index(name = "ix_apartment_person", columnList = "person_id")

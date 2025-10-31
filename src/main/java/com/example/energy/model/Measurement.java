@@ -10,8 +10,6 @@ import java.time.LocalDate;
 
 @Entity
 @Table(name = "measurement",
-        uniqueConstraints = @UniqueConstraint(name = "uk_measurement_meter_date",
-                columnNames = {"meter_id", "measure_date"}),
         indexes = {
                 @Index(name = "ix_measurement_meter", columnList = "meter_id"),
                 @Index(name = "ix_measurement_date", columnList = "measure_date")

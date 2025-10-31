@@ -33,7 +33,7 @@ public class Meter {
     private Apartment apartment;
 
     @Column(name = "active")
-    private boolean active;
+    private Boolean active = true;
 
     @OneToMany(mappedBy = "meter", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Measurement> measurements;

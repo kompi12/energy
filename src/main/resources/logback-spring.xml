@@ -7,7 +7,13 @@
         </encoder>
     </appender>
 
-    <root level="info">
-        <appender-ref ref="FILE" />
+    <!-- Only log your application's package -->
+    <logger name="com.example.energy" level="INFO" additivity="false">
+        <appender-ref ref="FILE"/>
+    </logger>
+
+    <!-- Root logger set to ERROR to suppress Spring/Hibernate INFO -->
+    <root level="ERROR">
+        <appender-ref ref="FILE"/>
     </root>
 </configuration>

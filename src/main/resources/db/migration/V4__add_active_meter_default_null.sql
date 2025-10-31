@@ -1,0 +1,6 @@
+UPDATE meter
+SET active = TRUE
+WHERE active IS NULL;
+
+ALTER TABLE meter
+    ALTER COLUMN active SET DEFAULT TRUE;

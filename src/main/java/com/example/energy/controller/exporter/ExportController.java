@@ -2,10 +2,12 @@ package com.example.energy.controller.exporter;
 
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.export.ExportService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import com.example.energy.viewmodel.ExportDataViewModel;
+import org.apache.catalina.connector.Response;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @RestController
@@ -19,17 +21,17 @@ public class ExportController {
 
     private  final ExportService exportService;
 
-    @PostMapping
-    @RequestMapping("/importExcelData")
-    public EnergyResponse importData(@RequestParam("file") MultipartFile file) {
+    @PostMapping("/exportData")
+    public ResponseEntity<byte[]> importData(@RequestBody ExportDataViewModel exportData) {
         try {
-            //exportService.importInitalData(file);
-            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
-
+            byte[] reponse = exportService.exportDataForBuilding(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=measurements.xlsx")
+                    .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(reponse);
         } catch(Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
-
+return ResponseEntity.badRequest().build();
         }
     }
 

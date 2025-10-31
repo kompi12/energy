@@ -32,7 +32,8 @@ public class MeterUpsertService {
             String meterCode,
             String power,
             String buildingCode,
-            String personFirstName
+            String personFirstName,
+            String siemensSN
     ) {
         // Normalize
         String m = t(mbr);
@@ -42,13 +43,33 @@ public class MeterUpsertService {
         String pwr = t(power);
         String bCode = t(buildingCode);
         String pName = t(personFirstName);
+        String siemens = t(siemensSN);
 
         // Fast path: existing meter
         Optional<Meter> existingMeter = meterRepository.findByCode(mCode);
-        if (existingMeter.isPresent()) return existingMeter.get();
+        if(!siemens.isEmpty()) {
+            if(existingMeter.isPresent()) {
+                Optional<Meter> siemenMeter = meterRepository.findByCode(siemens);
+                if(siemenMeter.isPresent()) {
+                    return siemenMeter.get();
+                }
+                Meter existing = existingMeter.get();
+                existing.setActive(false);
+
+                Optional<Apartment> apartment = apartmentRepository.findByMbr(m);
+                Meter newMeter = new Meter();
+                newMeter.setCode(siemensSN);
+                newMeter.setActive(true);
+                newMeter.setPower(power);
+                newMeter.setApartment(existing.getApartment());
+                meterRepository.save(newMeter);
+                meterRepository.save(existing);
+            }
+
+        }
+        if (existingMeter.isPresent() ) return existingMeter.get();
 
 
-        List<City> citys = cityRepository.findAll();
         // City
         City city = cityRepository.findByNameIgnoreCase(cName)
                 .orElseGet(() -> {
