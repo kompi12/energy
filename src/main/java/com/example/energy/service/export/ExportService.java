@@ -1,6 +1,5 @@
 package com.example.energy.service.export;
 
-
 import com.example.energy.model.*;
 import com.example.energy.repository.*;
 import com.example.energy.service.ApartmentService;
@@ -11,24 +10,27 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayOutputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.time.LocalDate;
+import java.io.*;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @Service
 public class ExportService {
 
     private static final Logger logger = LoggerFactory.getLogger(ExportService.class);
+
+    private final MeterRepository meterRepository;
+    private final ApartmentService apartmentService;
+    private final ApartmentRepository apartmentRepository;
+    private final BuildingRepository buildingRepository;
+    private final MeasurementRepository measurementRepository;
+    private final CityRepository cityRepository;
+    private final PersonRepository personRepository;
 
     public ExportService(
             MeterRepository meterRepository,
@@ -48,73 +50,102 @@ public class ExportService {
         this.personRepository = personRepository;
     }
 
+    /**
+     * Generate a ZIP file containing Excel reports for multiple buildings.
+     */
+    public byte[] exportDataForBuildings(ExportDataViewModel dataViewModel) throws IOException {
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
 
-    private final MeterRepository meterRepository;
-    private final ApartmentService apartmentService;
-    private final ApartmentRepository apartmentRepository;
-    private final BuildingRepository buildingRepository;
-    private final MeasurementRepository measurementRepository;
-    private final CityRepository cityRepository;
-    private final PersonRepository personRepository;
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            for (String buildingId : dataViewModel.getLists()) {
+                Optional<Building> buildingOpt = buildingRepository.findByCodeIgnoreCase(buildingId);
 
+                if (buildingOpt.isEmpty()) {
+                    logger.warn("Building not found for id: {}", buildingId);
+                    continue;
+                }
 
-    public byte[] exportDataForBuilding(ExportDataViewModel dataViewModel) throws IOException {
-        for (String buildingId : dataViewModel.getLists()) {
-            Optional<Building> building = buildingRepository.findByCodeIgnoreCase(buildingId);
-            if (building.isPresent()) {
-                Building build = building.get();
-                List<MeasurementRow> rows = build.getApartments().stream()
-                        // Ignore apartments without hepMBR
+                Building building = buildingOpt.get();
+
+                // Prepare measurement data
+                List<MeasurementRow> rows = building.getApartments().stream()
+                        .filter(apartment -> Boolean.TRUE.equals(apartment.getActive()))
                         .filter(apartment -> apartment.getHepMBR() != null && !apartment.getHepMBR().isBlank())
-                        // Sort by sequence
-                        .sorted(Comparator.comparingInt(apartment -> apartment.getSequence() != null ? apartment.getSequence() : 0))
-                        // Map each apartment to a MeasurementRow with summed value
+                        .sorted(Comparator.comparingInt(a -> a.getSequence() != null ? a.getSequence() : 0))
                         .map(apartment -> {
                             double sum = apartment.getMeters().stream()
-                                    .filter(meter -> Boolean.TRUE.equals(meter.getActive()))
-                                    .flatMap(meter -> meter.getMeasurements().stream())
-                                    .filter(measurement -> measurement.getValue() != null)
-                                    .mapToDouble(measurement -> measurement.getValue())
+                                    .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                    .flatMap(m -> m.getMeasurements().stream())
+                                    .filter(meas -> meas.getValue() != null)
+                                    .mapToDouble(Measurement::getValue)
                                     .sum();
 
                             return new MeasurementRow(apartment.getHepMBR(), (int) sum);
                         })
-                        .toList();
+                        .collect(Collectors.toList());
 
-                return writeToExcel(rows,"/resources/excel");
+                // Create Excel workbook for this building
+                byte[] excelBytes = writeToExcel(rows, building.getCode());
+
+                // Add Excel to ZIP
+                String fileName = building.getCode() + "_measurements.xlsx";
+                ZipEntry entry = new ZipEntry(fileName);
+                zipOut.putNextEntry(entry);
+                zipOut.write(excelBytes);
+                zipOut.closeEntry();
+
+                // Optional: store locally
+                storeExcelLocally(fileName, excelBytes);
             }
         }
 
-        return new byte[0];
+        return zipBos.toByteArray();
     }
 
+    /**
+     * Create Excel file in memory.
+     */
+    private byte[] writeToExcel(List<MeasurementRow> rows, String buildingCode) throws IOException {
+        try (Workbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
 
-    public byte[] writeToExcel(List<MeasurementRow> rows, String filePath) throws IOException {
-        try (Workbook workbook = new XSSFWorkbook()) {
             Sheet sheet = workbook.createSheet("Measurements");
-
-            // Create header row
-            Row header = sheet.createRow(0);
-            header.createCell(0).setCellValue("Hep Mbr");
-            header.createCell(1).setCellValue("Measurement Value");
-
-            // Write data
-            int rowIndex = 1;
+            int rowIndex = 0;
             for (MeasurementRow rowData : rows) {
                 Row row = sheet.createRow(rowIndex++);
-                row.createCell(0).setCellValue(rowData.getHepMbr());
-                row.createCell(1).setCellValue(rowData.getValue());
+                row.createCell(0).setCellValue(rowIndex);
+                row.createCell(1).setCellValue(rowData.getHepMbr());
+                row.createCell(2).setCellValue(rowData.getValue());
             }
 
-            // Autosize columns
             sheet.autoSizeColumn(0);
             sheet.autoSizeColumn(1);
+            sheet.autoSizeColumn(2);
 
-            try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-                workbook.write(bos);
-                return bos.toByteArray(); // <-- return the bytes
-            }
+
+            workbook.write(bos);
+            return bos.toByteArray();
         }
     }
 
+    /**
+     * Optional: Save Excel to local disk.
+     */
+    private void storeExcelLocally(String fileName, byte[] data) {
+        try {
+            File outputDir = new File("exports");
+            if (!outputDir.exists()) {
+                outputDir.mkdirs();
+            }
+
+            File outputFile = new File(outputDir, fileName);
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                fos.write(data);
+            }
+
+            logger.info("Saved Excel locally: {}", outputFile.getAbsolutePath());
+        } catch (IOException e) {
+            logger.error("Failed to store Excel locally", e);
+        }
+    }
 }

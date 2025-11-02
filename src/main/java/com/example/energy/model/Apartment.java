@@ -47,6 +47,9 @@ public class Apartment {
     @Column(name = "sequence")
     private Integer sequence;
 
+    @Column(name = "active")
+    private Boolean active = true;
+
     @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Meter> meters;
 }

@@ -43,7 +43,7 @@ public class MeasurementUpsertService {
         String pNumber = t(pNumberXml);
 
 
-        Optional<Building> building = buildingRepository.findById(403L);
+        Optional<Building> building = buildingRepository.findById(560L);
         List<Long> listOfId = new ArrayList<>();
         listOfId.add(412L);
         listOfId.add(413L);
@@ -59,7 +59,7 @@ public class MeasurementUpsertService {
         listOfId.add(510L);
 
 
-        List<Building> buildings = buildingRepository.findAllById(listOfId);
+       // List<Building> buildings = buildingRepository.findAllById(listOfId);
        // Optional<Meter> meter = meterRepository.findByBuildingsAndMeter(listOfId, Long.valueOf(pNumber));
         Optional<Meter> meter = meterRepository.findByBuildingAndMeter(building.get().getId(), Long.valueOf(pNumber));
 

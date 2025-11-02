@@ -1,43 +1,32 @@
 package com.example.energy.controller.exporter;
 
-import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.export.ExportService;
 import com.example.energy.viewmodel.ExportDataViewModel;
-import org.apache.catalina.connector.Response;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
 
 @RestController
-@RequestMapping("/export")
+@RequestMapping("/api/export")
 public class ExportController {
+
+    private final ExportService exportService;
 
     public ExportController(ExportService exportService) {
         this.exportService = exportService;
     }
 
-
-    private  final ExportService exportService;
-
-    @PostMapping("/exportData")
-    public ResponseEntity<byte[]> importData(@RequestBody ExportDataViewModel exportData) {
+    @PostMapping("/buildings")
+    public ResponseEntity<byte[]> exportBuildings(@RequestBody ExportDataViewModel exportData) {
         try {
-            byte[] reponse = exportService.exportDataForBuilding(exportData);
+            byte[] zipResponse = exportService.exportDataForBuildings(exportData);
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=measurements.xlsx")
-                    .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
-                    .body(reponse);
-        } catch(Exception ex) {
-            ex.printStackTrace();
-return ResponseEntity.badRequest().build();
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
         }
     }
-
-
-
-
-
-
 }
