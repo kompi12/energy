@@ -6,13 +6,16 @@ import com.example.energy.repository.CityRepository;
 import com.example.energy.repository.MeterRepository;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.importer.ImporterService;
+import com.example.energy.viewmodel.ExportDataViewModel;
+import com.example.energy.viewmodel.MissingMetersDataViewModel;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 
@@ -28,7 +31,7 @@ public class ImporterController {
     }
 
 
-    private  final ImporterService importerService;
+    private final ImporterService importerService;
 
     @PostMapping
     @RequestMapping("/importExcelData")
@@ -37,9 +40,9 @@ public class ImporterController {
             importerService.importInitialData(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+            return EnergyResponse.error(500, "error");
 
         }
     }
@@ -52,9 +55,9 @@ public class ImporterController {
             importerService.importSequence(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+            return EnergyResponse.error(500, "error");
 
         }
     }
@@ -67,9 +70,23 @@ public class ImporterController {
             importerService.importDataForMonth(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+
+    @PostMapping("/importMetersMissing")
+    public EnergyResponse exportBuildings(@RequestBody MissingMetersDataViewModel exportData) {
+        try {
+
+            importerService.importMissingMeters(exportData);
+            return EnergyResponse.success(EnergyResponse.success("Meters added successfully", null));
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
 
         }
     }
@@ -80,18 +97,17 @@ public class ImporterController {
     public EnergyResponse importXML(@RequestParam("file") MultipartFile file) {
         try {
             if (file == null || file.isEmpty()) {
-                return EnergyResponse.error(500,"No file added");
+                return EnergyResponse.error(500, "No file added");
             }
             importerService.importXML(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+            return EnergyResponse.error(500, "error");
 
         }
     }
-
 
 
 }

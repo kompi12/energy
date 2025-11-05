@@ -5,16 +5,20 @@ import com.example.energy.model.Measurement;
 import com.example.energy.model.Meter;
 
 import com.example.energy.repository.ApartmentRepository;
+import com.example.energy.repository.BuildingRepository;
 import com.example.energy.repository.MeasurementRepository;
 import com.example.energy.repository.MeterRepository;
 import com.example.energy.service.MeasurementService;
 import com.example.energy.service.MeasurementUpsertService;
 import com.example.energy.service.MeterUpsertService;
+import com.example.energy.viewmodel.MissingMetersDataViewModel;
 import lombok.RequiredArgsConstructor;
+import org.apache.catalina.User;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -26,14 +30,11 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.InputStream;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Importer for initial master data and monthly measurements from Excel.
@@ -52,81 +53,134 @@ import java.util.Optional;
  *     [7]=date (ISO yyyy-MM-dd or Excel date) [8]=value (int)
  */
 @Service
-@RequiredArgsConstructor
 public class ImporterService {
 
     private static final Logger log = LoggerFactory.getLogger(ImporterService.class);
 
     private final MeterUpsertService meterUpsertService;
+
     private final MeterRepository meterRepository;
     private final MeasurementRepository measurementRepository;
     private final ApartmentRepository apartmentRepository;
     private final MeasurementService measurementService;
     private final MeasurementUpsertService measurementUpsertService;
+    private final BuildingRepository buildingRepository;
 
-    // ---------- Public API ----------
+    public ImporterService(
+            MeterUpsertService meterUpsertService,
+            MeterRepository meterRepository,
+            MeasurementRepository measurementRepository,
+            ApartmentRepository apartmentRepository,
+            MeasurementService measurementService,
+            MeasurementUpsertService measurementUpsertService,
 
+            BuildingRepository buildingRepository) {
+        this.meterUpsertService = meterUpsertService;
+        this.meterRepository = meterRepository;
+        this.measurementRepository = measurementRepository;
+        this.apartmentRepository = apartmentRepository;
+        this.measurementService = measurementService;
+        this.measurementUpsertService = measurementUpsertService;
+        this.buildingRepository = buildingRepository;
+    }
     /**
      * Imports *monthly* measurements from the first sheet.
      * Creates a Measurement if meter exists; logs missing meters.
      */
+    @Transactional
     public void importDataForMonth(MultipartFile file) {
         try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
             Sheet sheet = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
 
-            int inserted = 0, skipped = 0, missingMeter = 0;
+            int inserted = 0, skipped = 0, missingMeter = 0, duplicates = 0;
 
+            // 1️⃣ Collect all meter codes from the Excel
+            Set<String> meterCodes = new HashSet<>();
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                String meterCode = fmt.formatCellValue(r.getCell(6)).trim();
+                if (!meterCode.isEmpty()) meterCodes.add(meterCode);
+            }
+
+            List<Meter> activeMeters = meterRepository.findByCodeInAndActiveTrue(meterCodes);
+            Map<String, Meter> meterMap = activeMeters.stream()
+                    .collect(Collectors.toMap(Meter::getCode, m -> m));
+
+            // 3️⃣ Preload existing measurements for these meters (current month or all)
+            List<Meter> meters = new ArrayList<>(meterMap.values());
+            Map<String, Set<LocalDate>> existingByMeter = new HashMap<>();
+            measurementRepository.findAllByMeterIn(meters).forEach(m -> {
+                existingByMeter
+                        .computeIfAbsent(m.getMeter().getCode(), k -> new HashSet<>())
+                        .add(m.getMeasureDate());
+            });
+
+            List<Measurement> buffer = new ArrayList<>();
+            final int BATCH_SIZE = 500;
+
+            // 4️⃣ Iterate rows
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row r = sheet.getRow(i);
                 if (r == null) continue;
 
-                String meterCode = fmt.formatCellValue(r.getCell(5)).trim();
-                if (meterCode.isEmpty()) { skipped++; continue; }
+                String meterCode = fmt.formatCellValue(r.getCell(6)).trim();
+                String measurementValue = fmt.formatCellValue(r.getCell(8)).trim();
+                if (meterCode.isEmpty() || measurementValue.isEmpty()) { skipped++; continue; }
 
-                Optional<Meter> meterOpt = meterRepository.findByCode(meterCode);
-                if (meterOpt.isEmpty()) {
-                    // log who it was (if present) to help reconcile
+                Meter meter = meterMap.get(meterCode);
+                if (meter == null) {
                     String person = fmt.formatCellValue(r.getCell(2)).trim();
-                    log.info("Missing meter for row {}: code='{}' person='{}'", i, meterCode, person);
+                    log.info("Missing or inactive meter for row {}: code='{}', person='{}'", i, meterCode, person);
                     missingMeter++;
                     continue;
                 }
 
-                Meter meter = meterOpt.get();
-
-                Integer value = parseInteger(fmt.formatCellValue(r.getCell(8)));
-                if (value == null) value = 0;
-
                 LocalDate date = parseLocalDate(r.getCell(7), fmt);
-                if (date == null) {
-                    log.warn("Row {} skipped: invalid/empty date for meter {}", i, meterCode);
-                    skipped++;
+                if (date == null) { skipped++; continue; }
+
+                // 🧠 Check if measurement already exists
+                Set<LocalDate> existingDates = existingByMeter.computeIfAbsent(meterCode, k -> new HashSet<>());
+                if (existingDates.contains(date)) {
+                    duplicates++;
                     continue;
                 }
+
+                Integer value = parseInteger(measurementValue);
+                if (value == null) value = 0;
 
                 Measurement m = new Measurement();
                 m.setMeter(meter);
                 m.setMeasureDate(date);
                 m.setValue(value);
                 m.setCreatedAt(Instant.now());
-                m.setCreatedBy("Excel Monthly Import");
+                m.setCreatedBy("Monthly Import " + YearMonth.now());
 
-                measurementRepository.save(m);
+                buffer.add(m);
                 inserted++;
+                existingDates.add(date); // ✅ now safe
 
-                // simple batching every 200 rows
-                if ((inserted % 200) == 0) {
-                    measurementRepository.flush();
+
+                if (buffer.size() >= BATCH_SIZE) {
+                    measurementRepository.saveAll(buffer);
+                    buffer.clear();
                 }
             }
 
-            log.info("Monthly import done: inserted={}, missingMeter={}, skipped={}", inserted, missingMeter, skipped);
+            if (!buffer.isEmpty()) {
+                measurementRepository.saveAll(buffer);
+            }
+
+            log.info("Monthly import done: inserted={}, duplicates={}, missingMeter={}, skipped={}",
+                    inserted, duplicates, missingMeter, skipped);
+
         } catch (Exception e) {
             log.error("Monthly import failed: {}", e.getMessage(), e);
             throw new RuntimeException("Monthly import failed", e);
         }
     }
+
 
     /**
      * Imports *initial* master data from multiple sheets.
@@ -356,6 +410,19 @@ public class ImporterService {
         } catch (Exception e) {
             log.error("import sequence failed: {}", e.getMessage(), e);
             throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
+    public void importMissingMeters(MissingMetersDataViewModel viewModel) {
+        for(String hepMbr : viewModel.getHepMbr()) {
+            Optional<Apartment> apartmentExists = apartmentRepository.findByHepMBR(hepMbr);
+            if(apartmentExists.isEmpty()) {
+                Apartment apartment = new Apartment();
+                apartment.setHepMBR(hepMbr);
+                apartment.setMbr("Ne postoji gledamo hep mbr" + viewModel.getHepMbr());
+                apartment.setBuilding(buildingRepository.findByCodeIgnoreCase(viewModel.getBuildingId()).get());
+                apartmentRepository.save(apartment);
+            }
         }
     }
 
