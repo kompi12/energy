@@ -1,9 +1,12 @@
 package com.example.energy.controller;
 
 import com.example.energy.model.Apartment;
+import com.example.energy.model.Meter;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.ApartmentService;
+import com.example.energy.viewmodel.RequestBodyPersonViewModel;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,6 +29,8 @@ public class ApartmentController {
             return EnergyResponse.error(500, exception.getMessage());
         }
     }
+
+
 
 
 }

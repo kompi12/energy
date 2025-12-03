@@ -103,7 +103,7 @@ public class ImporterService {
                 String meterCode = fmt.formatCellValue(r.getCell(6)).trim();
                 if (!meterCode.isEmpty()) meterCodes.add(meterCode);
             }
-
+           // List<Meter> activeMeters =meterRepository.findByCodeInAndActiveTrueAndApartmentActiveTrue(meterCodes,true,true);
             List<Meter> activeMeters = meterRepository.findByCodeInAndActiveTrue(meterCodes);
             Map<String, Meter> meterMap = activeMeters.stream()
                     .collect(Collectors.toMap(Meter::getCode, m -> m));
@@ -426,6 +426,50 @@ public class ImporterService {
         }
     }
 
+    public void importNewMeters(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file is empty or null");
+        }
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
+            Sheet sheet = wb.getSheetAt(0);
+            if (sheet == null) return;
+
+            int createdMeters = 0, existingMeters = 0, rows = 0;
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                rows++;
+
+                String mbr          = s(fmt, r.getCell(2));
+                String siemensSN          = s(fmt, r.getCell(5));
+                String sntechem          = s(fmt, r.getCell(6));
+
+
+                Apartment apartment = apartmentRepository.findByMbr(mbr).orElseThrow(null);
+
+                Optional<Meter> existing = meterRepository.findByCodeAndApartment_Id(sntechem,apartment.getId());
+                if(existing.isPresent()) {
+                    existing.get().setActive(false);
+                    meterRepository.save(existing.get());
+                }
+                Meter meter = new Meter();
+                meter.setCode(siemensSN);
+                meter.setActive(true);
+                meter.setApartment(apartment);
+                meterRepository.save(meter);
+            }
+
+            log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                    "", rows, createdMeters, existingMeters);
+
+        } catch (Exception e) {
+            log.error("Initial import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
 
 
     private void importInitialSheetSequence(Sheet sheet, DataFormatter fmt, String label) {
@@ -468,73 +512,180 @@ public class ImporterService {
 
 
     public void importXML(MultipartFile file) {
-        int createdMeasurements = 0;
+            int createdMeasurements = 0;
 
-        try (InputStream is = file.getInputStream()) {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(is);
-            doc.getDocumentElement().normalize();
+            try (InputStream is = file.getInputStream()) {
 
-            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+                DocumentBuilder builder = factory.newDocumentBuilder();
+                Document doc = builder.parse(is);
+                doc.getDocumentElement().normalize();
 
-            for (int i = 0; i < measuredevList.getLength(); i++) {
-                Element measuredev = (Element) measuredevList.item(i);
-                String nr = measuredev.getAttribute("nr");
+                NodeList measuredevList = doc.getElementsByTagName("measuredev");
 
-                String fabnr = safeGetText(measuredev, "fabnr");
-                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
-                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+                for (int i = 0; i < measuredevList.getLength(); i++) {
+                    Element measuredev = (Element) measuredevList.item(i);
 
-                // Build datetime candidate: prefer datapoint dimension="datetime", else combine <date> + <time>
-                String datetimeCandidate = null;
-                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
-                for (int j = 0; j < datapoints.getLength(); j++) {
-                    Element dp = (Element) datapoints.item(j);
-                    String dim = safeGetText(dp, "dimension");
-                    if ("datetime".equalsIgnoreCase(dim)) {
-                        datetimeCandidate = safeGetText(dp, "value"); // e.g. "26.10.25 16:01:00"
-                        break;
+                    String fabnr = safeGetText(measuredev, "fabnr");
+                    Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+                    String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+
+                    // --------------------------------------------------------------
+                    // Determine datetime: FIRST look for datapoint dimension=datetime
+                    // --------------------------------------------------------------
+                    String datetimeCandidate = null;
+                    NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                    for (int j = 0; j < datapoints.getLength(); j++) {
+                        Element dp = (Element) datapoints.item(j);
+                        String dim = safeGetText(dp, "dimension");
+
+                        if ("datetime".equalsIgnoreCase(dim)) {
+                            datetimeCandidate = safeGetText(dp, "value");
+                            break;
+                        }
+                    }
+
+                    if (datetimeCandidate == null) {
+                        String xmlDate = safeGetText(measuredev, "date");
+                        String xmlTime = safeGetText(measuredev, "time");
+
+                        if (!xmlDate.isEmpty()) {
+                            datetimeCandidate = xmlTime.isEmpty() ? xmlDate : xmlDate + " " + xmlTime;
+                        }
+                    }
+
+                    String isoDatetime = parseToIso(datetimeCandidate);
+
+                    // --------------------------------------------------------------
+                    // FIND FIRST DATAPOINT WITH dimension == "H.C.A."
+                    // --------------------------------------------------------------
+                    Element hcaDatapoint = null;
+
+                    for (int j = 0; j < datapoints.getLength(); j++) {
+                        Element dp = (Element) datapoints.item(j);
+
+                        String dim = safeGetText(dp, "dimension");
+                        if (dim == null) {
+                            continue; // invalid → skip
+                        }
+
+                        if ("H.C.A.".equalsIgnoreCase(dim.trim())) {
+                            hcaDatapoint = dp;
+                            break; // first match only
+                        }
+
+                        // Any other dimension → skip and continue searching
+                    }
+
+                    // No H.C.A. datapoint found → skip whole measuredev
+                    if (hcaDatapoint == null) {
+                        continue;
+                    }
+
+                    // --------------------------------------------------------------
+                    // Extract value from the FIRST H.C.A. datapoint
+                    // --------------------------------------------------------------
+                    String value = safeGetText(hcaDatapoint, "value");
+
+                    if (value == null || value.trim().isEmpty() || value.contains("--.--.--")) {
+                        continue; // invalid HCA datapoint
+                    }
+
+                    // --------------------------------------------------------------
+                    // Determine device ID (identnr > fabnr)
+                    // --------------------------------------------------------------
+                    String deviceId = identnr.isEmpty() ? fabnr : identnr;
+
+                    // --------------------------------------------------------------
+                    // Create or update measurement
+                    // --------------------------------------------------------------
+                    Measurement measurement = measurementUpsertService.createMeasurement(
+                            isoDatetime,
+                            value,
+                            deviceId
+                    );
+
+                    if (measurement != null) {
+                        createdMeasurements++;
                     }
                 }
-                if (datetimeCandidate == null) {
-                    String xmlDate = safeGetText(measuredev, "date"); // e.g. "26.10.25"
-                    String xmlTime = safeGetText(measuredev, "time"); // e.g. "16:01:00"
-                    if (!xmlDate.isEmpty()) {
-                        datetimeCandidate = xmlTime.isEmpty() ? xmlDate : (xmlDate + " " + xmlTime);
-                    }
-                }
-                String isoDatetime = parseToIso(datetimeCandidate); // may be null if can't parse
 
-                // Only process the SECOND datapoint (index 1)
-                if (datapoints.getLength() < 2) {
-                    continue;
-                }
-                Element secondDp = (Element) datapoints.item(1);
-                String secondValue = safeGetText(secondDp, "value");
-                String secondDimension = safeGetText(secondDp, "dimension");
+                log.info("Imported: createdMeasurements={}", createdMeasurements);
 
-                // Skip placeholder/error values
-                if (secondValue == null || secondValue.trim().isEmpty() || secondValue.contains("--.--.--")) {
-                    continue;
-                }
-
-                // Choose identifier: prefer identnr, fallback to fabnr
-                String deviceId = identnr.isEmpty() ? fabnr : identnr;
-
-                // Call your upsert. Keep signature as-is (String isoDatetime) or refactor to accept LocalDate/LocalDateTime.
-                Measurement measurement = measurementUpsertService.createMeasurement(isoDatetime, secondValue, deviceId);
-                if (measurement != null) {
-                    createdMeasurements++;
-                }
+            } catch (Exception e) {
+                log.error("Import failed: {}", e.getMessage(), e);
+                throw new RuntimeException("Import failed", e);
             }
-
-            log.info("Imported: createdMeasurements={}", createdMeasurements);
-        } catch (Exception e) {
-            log.error("Import failed: {}", e.getMessage(), e);
-            throw new RuntimeException("Import failed", e);
         }
-    }
+
+//        int createdMeasurements = 0;
+//
+//        try (InputStream is = file.getInputStream()) {
+//            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+//            DocumentBuilder builder = factory.newDocumentBuilder();
+//            Document doc = builder.parse(is);
+//            doc.getDocumentElement().normalize();
+//
+//            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+//
+//            for (int i = 0; i < measuredevList.getLength(); i++) {
+//                Element measuredev = (Element) measuredevList.item(i);
+//                String nr = measuredev.getAttribute("nr");
+//
+//                String fabnr = safeGetText(measuredev, "fabnr");
+//                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+//                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+//
+//                // Build datetime candidate: prefer datapoint dimension="datetime", else combine <date> + <time>
+//                String datetimeCandidate = null;
+//                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+//                for (int j = 0; j < datapoints.getLength(); j++) {
+//                    Element dp = (Element) datapoints.item(j);
+//                    String dim = safeGetText(dp, "dimension");
+//                    if ("datetime".equalsIgnoreCase(dim)) {
+//                        datetimeCandidate = safeGetText(dp, "value"); // e.g. "26.10.25 16:01:00"
+//                        break;
+//                    }
+//                }
+//                if (datetimeCandidate == null) {
+//                    String xmlDate = safeGetText(measuredev, "date"); // e.g. "26.10.25"
+//                    String xmlTime = safeGetText(measuredev, "time"); // e.g. "16:01:00"
+//                    if (!xmlDate.isEmpty()) {
+//                        datetimeCandidate = xmlTime.isEmpty() ? xmlDate : (xmlDate + " " + xmlTime);
+//                    }
+//                }
+//                String isoDatetime = parseToIso(datetimeCandidate); // may be null if can't parse
+//
+//                // Only process the SECOND datapoint (index 1)
+//                if (datapoints.getLength() < 2) {
+//                    continue;
+//                }
+//                Element secondDp = (Element) datapoints.item(1);
+//                String secondValue = safeGetText(secondDp, "value");
+//                String secondDimension = safeGetText(secondDp, "dimension");
+//
+//                // Skip placeholder/error values
+//                if (secondValue == null || secondValue.trim().isEmpty() || secondValue.contains("--.--.--")) {
+//                    continue;
+//                }
+//
+//                // Choose identifier: prefer identnr, fallback to fabnr
+//                String deviceId = identnr.isEmpty() ? fabnr : identnr;
+//
+//                // Call your upsert. Keep signature as-is (String isoDatetime) or refactor to accept LocalDate/LocalDateTime.
+//                Measurement measurement = measurementUpsertService.createMeasurement(isoDatetime, secondValue, deviceId);
+//                if (measurement != null) {
+//                    createdMeasurements++;
+//                }
+//            }
+//
+//            log.info("Imported: createdMeasurements={}", createdMeasurements);
+//        } catch (Exception e) {
+//            log.error("Import failed: {}", e.getMessage(), e);
+//            throw new RuntimeException("Import failed", e);
+//        }
+//    }
 
     private String safeGetText(Element parent, String tagName) {
         NodeList nl = parent.getElementsByTagName(tagName);

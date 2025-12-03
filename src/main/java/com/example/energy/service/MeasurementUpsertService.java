@@ -43,25 +43,24 @@ public class MeasurementUpsertService {
         String pNumber = t(pNumberXml);
 
 
-        Optional<Building> building = buildingRepository.findById(560L);
-        List<Long> listOfId = new ArrayList<>();
-        listOfId.add(412L);
-        listOfId.add(413L);
+//        Optional<Building> building = buildingRepository.findById(403L);
+//        List<Long> listOfId = new ArrayList<>();
+//        listOfId.add(412L);
+//        listOfId.add(413L);
+//
+//        listOfId.add(414L);
+//        listOfId.add(418L);
+//        listOfId.add(453L);
+//        listOfId.add(458L);
+//
+//        listOfId.add(510L);
 
-        listOfId.add(414L);
-        listOfId.add(418L);
-        listOfId.add(453L);
-        listOfId.add(458L);
-        listOfId.add(459L);
-        listOfId.add(460L);
-        listOfId.add(461L);
-        listOfId.add(502L);
-        listOfId.add(510L);
+        Optional<Meter> meter = meterRepository.findByCodeAndActiveTrue(pNumber);
 
 
        // List<Building> buildings = buildingRepository.findAllById(listOfId);
        // Optional<Meter> meter = meterRepository.findByBuildingsAndMeter(listOfId, Long.valueOf(pNumber));
-        Optional<Meter> meter = meterRepository.findByBuildingAndMeter(building.get().getId(), Long.valueOf(pNumber));
+        //Optional<Meter> meter = meterRepository.findByBuildingAndMeter(building.get().getId(), Long.valueOf(pNumber));
 
         if(meter.isEmpty()) {
             logger.info("Meter not found  {}" + pNumber);

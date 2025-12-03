@@ -17,7 +17,7 @@ public class Meter {
     @Id
     @EqualsAndHashCode.Include
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "meter_seq")
-    @SequenceGenerator(name = "meter_seq", sequenceName = "meter_seq", allocationSize = 50)
+    @SequenceGenerator(name = "meter_seq", sequenceName = "meter_seq", allocationSize = 1)
     @Column(name = "meter_id")
     private Long id;
 

@@ -17,13 +17,18 @@ public class MeterViewModel {
 
     private ApartmentViewModel apartment;
 
+    private boolean active;
+
     private List<MeasurementViewModel> measurements;
+
+    private List<String> list;
 
     public static  MeterViewModel createViewModel(Meter meter) {
         MeterViewModel meterViewModel = new MeterViewModel();
         meterViewModel.setCode(meter.getCode());
+        meterViewModel.setActive(meter.getActive());
         meterViewModel.setApartment(ApartmentViewModel.createViewModel(meter.getApartment()));
-        meterViewModel.setMeasurements(meter.getMeasurements().stream().map(MeasurementViewModel::createViewModel).collect(Collectors.toList()));
+
         return meterViewModel;
     }
 

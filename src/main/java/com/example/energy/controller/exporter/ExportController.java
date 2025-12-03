@@ -29,4 +29,48 @@ public class ExportController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    @PostMapping("/buildingsVinkovci")
+    public ResponseEntity<byte[]> exportBuildingsVinkovci(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsVinkovciOneSheet(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+
+    @PostMapping("/buildingsP")
+    public ResponseEntity<byte[]> exportPerosn(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPerson(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+
+    @PostMapping("/buildingsPersonByMeter")
+    public ResponseEntity<byte[]> exportPersonByMeter(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonForMeters(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 }

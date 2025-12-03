@@ -91,6 +91,19 @@ public class ImporterController {
         }
     }
 
+    @PostMapping("/importMetersMissingSjenjak")
+    public EnergyResponse importBuildingSjenjak(@RequestParam("file") MultipartFile file) {
+        try {
+
+            importerService.importNewMeters(file);
+            return EnergyResponse.success(EnergyResponse.success("Meters added successfully", null));
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
 
     @PostMapping
     @RequestMapping("/importXML")

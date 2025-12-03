@@ -11,5 +11,7 @@ import java.util.List;
 public class ExportDataViewModel {
 
     private String date;
+    private Integer year;
+    private Integer month;
     private List<String> lists;
 }
