@@ -3,10 +3,7 @@ package com.example.energy.service.export;
 import com.example.energy.model.*;
 import com.example.energy.repository.*;
 import com.example.energy.service.ApartmentService;
-import com.example.energy.viewmodel.ExportDataViewModel;
-import com.example.energy.viewmodel.MeasurementRow;
-import com.example.energy.viewmodel.MeasurementRowWithPerson;
-import com.example.energy.viewmodel.MeasurementRowWithPersonForMeter;
+import com.example.energy.viewmodel.*;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -144,6 +141,80 @@ public class ExportService {
 
                 // Create CSV file for this building
                 byte[] csvBytes = writeToCsv(rowsDiff, building.getCode());
+
+                // Add CSV to ZIP
+                String fileName = building.getName() + dataViewModel.getDate() + ".csv";
+                ZipEntry entry = new ZipEntry(fileName);
+                zipOut.putNextEntry(entry);
+                zipOut.write(csvBytes);
+                zipOut.closeEntry();
+
+                // Optional: store locally
+                storeCsvLocally(fileName, csvBytes);
+            }
+        }
+
+        return zipBos.toByteArray();
+    }
+
+    public byte[] exportDataForBuildingsJD7(ExportDataViewModel dataViewModel) throws IOException {
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            for (String buildingId : dataViewModel.getLists()) {
+                Optional<Building> buildingOpt = buildingRepository.findByCodeIgnoreCase(buildingId);
+
+                if (buildingOpt.isEmpty()) {
+                    logger.warn("Building not found for id: {}", buildingId);
+                    continue;
+                }
+
+                Building building = buildingOpt.get();
+
+
+                YearMonth thisMonth = YearMonth.of(dataViewModel.getYear(), dataViewModel.getMonth());
+                YearMonth lastMonth = thisMonth.minusMonths(1);
+
+                List<MeterRow> meterRows = building.getApartments().stream()
+                        .flatMap(apartment -> apartment.getMeters().stream()
+                                .map(meter -> {
+
+                                    double thisMonthSum = meter.getMeasurements().stream()
+                                            .filter(meas -> meas.getValue() != null)
+                                            .filter(meas -> YearMonth.from(meas.getMeasureDate()).equals(thisMonth))
+                                            .mapToDouble(Measurement::getValue)
+                                            .sum();
+
+                                    double lastMonthSum = meter.getMeasurements().stream()
+                                            .filter(meas -> meas.getValue() != null)
+                                            .filter(meas -> YearMonth.from(meas.getMeasureDate()).equals(lastMonth))
+                                            .mapToDouble(Measurement::getValue)
+                                            .sum();
+
+                                    int diff = (int) Math.max(thisMonthSum - lastMonthSum, 0);
+
+                                    return new MeterRow(apartment.getPerson().getFirstName(), meter.getCode(), diff);
+                                })
+                        )
+                        .collect(Collectors.toList());
+
+                Map<String, Integer> totalsByPerson = meterRows.stream()
+                        .collect(Collectors.groupingBy(
+                                MeterRow::getHepMBR,
+                                Collectors.summingInt(MeterRow::getDiff)
+                        ));
+
+                List<ExportRow> exportRows = meterRows.stream()
+                        .map(r -> new ExportRow(
+                                r.getHepMBR(),
+                                r.getMeterCode(),
+                                r.getDiff(),
+                                totalsByPerson.getOrDefault(r.getHepMBR(), 0)
+                        ))
+                        .collect(Collectors.toList());
+
+                byte[] csvBytes = writeToCsvJD7(exportRows, building.getCode());
+
 
                 // Add CSV to ZIP
                 String fileName = building.getName() + dataViewModel.getDate() + ".csv";
@@ -482,6 +553,29 @@ public class ExportService {
 
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
+
+    private byte[] writeToCsvJD7(List<ExportRow> rows, String buildingCode) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        // Data rows
+        int index = 1;
+        for (ExportRow row : rows) {
+            sb.append(index++)
+                    .append(';')
+                    .append(row.getHepMBR())
+                    .append(';')
+                    .append(row.getMeterCode())
+                    .append(';')
+                    .append(row.getDiff())
+                    .append(';')
+                    .append(row.getTotal())
+                    .append(';')
+                    .append('\n');
+        }
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF}); // UTF-8 BOM
+        out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+        return out.toByteArray();    }
 
     private byte[] writeToCsvVinkovci(List<MeasurementRow> rows) throws IOException {
         StringBuilder sb = new StringBuilder();

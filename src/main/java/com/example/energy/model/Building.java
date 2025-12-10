@@ -35,6 +35,10 @@ public class Building {
     @Column(length = 100)
     private String name;
 
+
+    @Column(length = 100)
+    private String techem;
+
     // One building can have multiple physical addresses
     @OneToMany(mappedBy = "building", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<BuildingAddress> addresses = new ArrayList<>();

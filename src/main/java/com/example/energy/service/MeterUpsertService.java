@@ -47,26 +47,26 @@ public class MeterUpsertService {
 
         // Fast path: existing meter
         Optional<Meter> existingMeter = meterRepository.findByCode(mCode);
-        if(!siemens.isEmpty()) {
-            if(existingMeter.isPresent()) {
-                Optional<Meter> siemenMeter = meterRepository.findByCode(siemens);
-                if(siemenMeter.isPresent()) {
-                    return siemenMeter.get();
-                }
-                Meter existing = existingMeter.get();
-                existing.setActive(false);
-
-                Optional<Apartment> apartment = apartmentRepository.findByMbr(m);
-                Meter newMeter = new Meter();
-                newMeter.setCode(siemensSN);
-                newMeter.setActive(true);
-                newMeter.setPower(power);
-                newMeter.setApartment(existing.getApartment());
-                meterRepository.save(newMeter);
-                meterRepository.save(existing);
-            }
-
-        }
+//        if(!siemens.isEmpty()) {
+//            if(existingMeter.isPresent()) {
+////                Optional<Meter> siemenMeter = meterRepository.findByCode(siemens);
+////                if(siemenMeter.isPresent()) {
+////                    return siemenMeter.get();
+////                }
+////                Meter existing = existingMeter.get();
+////                existing.setActive(false);
+////
+////                Optional<Apartment> apartment = apartmentRepository.findByMbr(m);
+////                Meter newMeter = new Meter();
+////                newMeter.setCode(siemensSN);
+////                newMeter.setActive(true);
+////                newMeter.setPower(power);
+////                newMeter.setApartment(existing.getApartment());
+////                meterRepository.save(newMeter);
+////                meterRepository.save(existing);
+//            }
+//
+//        }
         if (existingMeter.isPresent() ) return existingMeter.get();
 
 

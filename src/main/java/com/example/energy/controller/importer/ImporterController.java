@@ -49,6 +49,21 @@ public class ImporterController {
 
 
     @PostMapping
+    @RequestMapping("/checkBuildingsTechem")
+    public EnergyResponse checkBuildingsTechem(@RequestParam("file") MultipartFile file) {
+        try {
+            //importerService.checkBuildingsTechem(file);
+            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+
+    @PostMapping
     @RequestMapping("/importSequence")
     public EnergyResponse importSequence(@RequestParam("file") MultipartFile file) {
         try {
@@ -96,6 +111,19 @@ public class ImporterController {
         try {
 
             importerService.importNewMeters(file);
+            return EnergyResponse.success(EnergyResponse.success("Meters added successfully", null));
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+    @PostMapping("/importMetersMissinJD7")
+    public EnergyResponse importBuildingSjenjakJD7(@RequestParam("file") MultipartFile file) {
+        try {
+
+            importerService.importNewMetersJD7(file);
             return EnergyResponse.success(EnergyResponse.success("Meters added successfully", null));
         } catch (Exception ex) {
             ex.printStackTrace();

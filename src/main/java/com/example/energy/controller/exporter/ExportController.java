@@ -30,6 +30,20 @@ public class ExportController {
         }
     }
 
+    @PostMapping("/buildingsJD7")
+    public ResponseEntity<byte[]> exportBuildingsJD7(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsJD7(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
     @PostMapping("/buildingsVinkovci")
     public ResponseEntity<byte[]> exportBuildingsVinkovci(@RequestBody ExportDataViewModel exportData) {
         try {

@@ -1,8 +1,6 @@
 package com.example.energy.service.importer;
 
-import com.example.energy.model.Apartment;
-import com.example.energy.model.Measurement;
-import com.example.energy.model.Meter;
+import com.example.energy.model.*;
 
 import com.example.energy.repository.ApartmentRepository;
 import com.example.energy.repository.BuildingRepository;
@@ -318,6 +316,33 @@ public class ImporterService {
                 label, rows, createdMeters, existingMeters);
     }
 
+    private void checkBuildingsTechem(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
+
+        int createdMeters = 0, existingMeters = 0, rows = 0;
+        List<String> buildingCodes = new ArrayList<>();
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
+
+            String buildingCode = s(fmt, r.getCell(1)); // sifraZgrade
+            buildingCodes.add(buildingCode);
+
+        }
+
+        List<Building> listOfBuilding = buildingRepository.findAll();
+
+       // listOfBuilding.stream().filter(building -> building.get == "1").filter()
+
+
+        log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                label, rows, createdMeters, existingMeters);
+    }
+
+
+
+
     /** Audit sheet2: logs persons whose apartments (by MBR) are missing. */
     private void auditMissingUsersBySheet2(Sheet sheet, DataFormatter fmt) {
         if (sheet == null) return;
@@ -459,6 +484,60 @@ public class ImporterService {
                 meter.setActive(true);
                 meter.setApartment(apartment);
                 meterRepository.save(meter);
+            }
+
+            log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                    "", rows, createdMeters, existingMeters);
+
+        } catch (Exception e) {
+            log.error("Initial import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
+    public void importNewMetersJD7(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file is empty or null");
+        }
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
+            Sheet sheet = wb.getSheetAt(0);
+            if (sheet == null) return;
+
+            int createdMeters = 0, existingMeters = 0, rows = 0;
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                rows++;
+
+                //String naziv          = s(fmt, r.getCell(7));
+                String sn          = s(fmt, r.getCell(6));
+                String power          = s(fmt, r.getCell(9));
+                String datum          = s(fmt, r.getCell(7));
+                String vrijednost          = s(fmt, r.getCell(8));
+
+                Meter meter = meterRepository.findByCode(sn).orElseThrow(null);
+                if(meter != null) {
+                    Measurement measurement = new Measurement();
+                    measurement.setValue(Integer.valueOf(vrijednost));
+                    measurement.setMeasureDate(LocalDate.parse(datum));
+                    measurement.setMeter(meter);
+                    measurementRepository.save(measurement);
+                } else {
+                    log.info("No meter for {}",
+                            "", sn);
+                }
+
+
+//                Meter meter = meterUpsertService.findOrCreateMeter(naziv,"Jurja Damlatinca 7","Vinkovci",sn,power,"93600007",naziv,sn);
+//                if(meter != null) {
+//                    Measurement measurement = new Measurement();
+//                    measurement.setMeter(meter);
+//                    measurement.setMeasureDate(LocalDate.parse(datum));
+//                    measurement.setValue(Integer.valueOf(vrijednost));
+//                    measurementRepository.save(measurement);
+//                }
             }
 
             log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
