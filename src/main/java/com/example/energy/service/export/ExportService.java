@@ -391,7 +391,7 @@ public class ExportService {
                 // Collect rows: each apartment's total meter value + person name
                 List<MeasurementRowWithPerson> rows = building.getApartments().stream()
                         .filter(apartment -> Boolean.TRUE.equals(apartment.getActive()))
-                        .filter(apartment -> apartment.getHepMBR() != null && !apartment.getHepMBR().isBlank())
+                        //.filter(apartment -> apartment.getHepMBR() != null && !apartment.getHepMBR().isBlank())
                         .sorted(Comparator.comparingInt(a -> a.getSequence() != null ? a.getSequence() : 0))
                         .map(apartment -> {
                             double sum = apartment.getMeters().stream()
@@ -472,6 +472,166 @@ public class ExportService {
 
                 // Create CSV
                 byte[] csvBytes = writeToXlsx(rows);
+                //writeToCsvWithPersonForMeter(rows);
+
+                // Add CSV to ZIP
+                String fileName = building.getName() + "_" + dataViewModel.getDate() + ".csv";
+                ZipEntry entry = new ZipEntry(fileName);
+                zipOut.putNextEntry(entry);
+                zipOut.write(csvBytes);
+                zipOut.closeEntry();
+
+                // Optional: store locally
+                storeCsvLocally(fileName, csvBytes);
+            }
+        }
+
+        return zipBos.toByteArray();
+    }
+
+    public byte[] exportDataForBuildingsWithPersonKumulativno(ExportDataViewModel dataViewModel) throws IOException {
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            for (String buildingId : dataViewModel.getLists()) {
+                Optional<Building> buildingOpt = buildingRepository.findByCodeIgnoreCase(buildingId);
+
+                if (buildingOpt.isEmpty()) {
+                    logger.warn("Building not found for id: {}", buildingId);
+                    continue;
+                }
+
+                Building building = buildingOpt.get();
+                YearMonth thisMonth = YearMonth.of(dataViewModel.getYear(), dataViewModel.getMonth());
+                YearMonth lastMonth = thisMonth.minusMonths(1);
+                // Collect rows: each apartment's total meter value + person name
+                List<MeasurementRowWithPerson> rows = building.getApartments().stream()
+                        .filter(apartment -> Boolean.TRUE.equals(apartment.getActive()))
+//                        .filter(apartment -> apartment.getHepMBR() != null && !apartment.getHepMBR().isBlank())
+                        .sorted(Comparator.comparingInt(a -> a.getSequence() != null ? a.getSequence() : 0))
+                        .map(apartment -> {
+                                    double thisMonthSum = apartment.getMeters().stream()
+                                            .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                            .flatMap(m -> m.getMeasurements().stream())
+                                            .filter(meas -> meas.getValue() != null)
+                                            .filter(meas -> YearMonth.from(meas.getMeasureDate()).equals(thisMonth))
+                                            .mapToDouble(Measurement::getValue)
+                                            .sum();
+
+                                    double lastMonthSum = apartment.getMeters().stream()
+                                            .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                            .flatMap(m -> m.getMeasurements().stream())
+                                            .filter(meas -> meas.getValue() != null)
+                                            .filter(meas -> YearMonth.from(meas.getMeasureDate()).equals(lastMonth))
+                                            .mapToDouble(Measurement::getValue)
+                                            .sum();
+
+                                    int diffLastMonth = (int) Math.max(lastMonthSum - 0, 0);
+                                    int diffThisMonth = (int) Math.max(thisMonthSum - lastMonthSum, 0);
+
+                                    String personName = apartment.getPerson() != null
+                                            ? apartment.getPerson().getFirstName()
+                                            : "";
+
+                                    return new MeasurementRowWithPerson(
+                                            apartment.getHepMBR(),
+                                            personName,
+                                            (int) lastMonthSum,
+                                            (int) thisMonthSum,
+                                            diffLastMonth,
+                                            diffThisMonth,
+                                            apartment.getBuilding().getAddresses().stream().map(BuildingAddress::getAddressLine).collect(Collectors.joining(",")),
+                                            apartment.getBuilding().getCity().getName()
+                                    );
+                                }
+                        )
+                        .collect(Collectors.toList());
+
+
+                // Create CSV
+                byte[] csvBytes = writeToXlsxKumulativno(rows);
+                //writeToCsvWithPersonForMeter(rows);
+
+                // Add CSV to ZIP
+                String fileName = building.getName() + "_" + dataViewModel.getDate() + ".csv";
+                ZipEntry entry = new ZipEntry(fileName);
+                zipOut.putNextEntry(entry);
+                zipOut.write(csvBytes);
+                zipOut.closeEntry();
+
+                // Optional: store locally
+                storeCsvLocally(fileName, csvBytes);
+            }
+        }
+
+        return zipBos.toByteArray();
+    }
+
+    public byte[] exportDataForBuildingsWithPersonKumulativnoByMeters(ExportDataViewModel dataViewModel) throws IOException {
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            for (String buildingId : dataViewModel.getLists()) {
+                Optional<Building> buildingOpt = buildingRepository.findByCodeIgnoreCase(buildingId);
+
+                if (buildingOpt.isEmpty()) {
+                    logger.warn("Building not found for id: {}", buildingId);
+                    continue;
+                }
+
+                Building building = buildingOpt.get();
+                YearMonth thisMonth = YearMonth.of(dataViewModel.getYear(), dataViewModel.getMonth());
+                YearMonth lastMonth = thisMonth.minusMonths(1);
+                // Collect rows: each apartment's total meter value + person name
+                List<MeasurementRowWithPerson> rows =
+                        building.getApartments().stream()
+                                .filter(apartment -> Boolean.TRUE.equals(apartment.getActive()))
+                                // .filter(apartment -> apartment.getHepMBR() != null && !apartment.getHepMBR().isBlank())
+                                .sorted(Comparator.comparingInt(a -> a.getSequence() != null ? a.getSequence() : 0))
+                                .flatMap(apartment ->
+                                        apartment.getMeters().stream()
+                                                .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                                .map(meter -> {
+                                                    double thisMonthSum = meter.getMeasurements().stream()
+                                                            .filter(meas -> meas.getValue() != null)
+                                                            .filter(meas -> YearMonth.from(meas.getMeasureDate()).equals(thisMonth))
+                                                            .mapToDouble(Measurement::getValue)
+                                                            .sum();
+
+                                                    double lastMonthSum = meter.getMeasurements().stream()
+                                                            .filter(meas -> meas.getValue() != null)
+                                                            .filter(meas -> YearMonth.from(meas.getMeasureDate()).equals(lastMonth))
+                                                            .mapToDouble(Measurement::getValue)
+                                                            .sum();
+
+                                                    int diffLastMonth = (int) Math.max(lastMonthSum, 0);
+                                                    int diffThisMonth = (int) Math.max(thisMonthSum - lastMonthSum, 0);
+
+                                                    String personName = apartment.getPerson() != null
+                                                            ? apartment.getPerson().getFirstName()
+                                                            : "";
+
+                                                    return new MeasurementRowWithPerson(
+                                                            apartment.getHepMBR(),
+                                                            personName,
+                                                            (int) lastMonthSum,
+                                                            (int) thisMonthSum,
+                                                            diffLastMonth,
+                                                            diffThisMonth,
+                                                            apartment.getBuilding().getAddresses().stream()
+                                                                    .map(BuildingAddress::getAddressLine)
+                                                                    .collect(Collectors.joining(",")),
+                                                            apartment.getBuilding().getCity().getName(),
+                                                            meter.getCode()
+                                                    );
+                                                })
+                                )
+                                .collect(Collectors.toList());
+
+
+
+                // Create CSV
+                byte[] csvBytes = writeToXlsxKumulativnoMeter(rows);
                 //writeToCsvWithPersonForMeter(rows);
 
                 // Add CSV to ZIP
@@ -641,6 +801,80 @@ public class ExportService {
             xlsRow.createCell(3).setCellValue(r.getPersonName());
             xlsRow.createCell(4).setCellValue(r.getMeterCode());
             xlsRow.createCell(5).setCellValue(r.getValue());
+        }
+
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        workbook.write(bos);
+        workbook.close();
+
+        return bos.toByteArray();
+    }
+
+    private byte[] writeToXlsxKumulativno(List<MeasurementRowWithPerson> rows) throws IOException {
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        XSSFSheet sheet = workbook.createSheet("Export");
+
+        int rowNum = 0;
+        Row header = sheet.createRow(rowNum++);
+        header.createCell(0).setCellValue("Grad");
+        header.createCell(1).setCellValue("Adresa");
+        header.createCell(2).setCellValue("Hep Mbr");
+        header.createCell(3).setCellValue("Naziv osobe");
+        header.createCell(4).setCellValue("Listopad");
+        header.createCell(5).setCellValue("Studeni");
+        header.createCell(6).setCellValue("Potrosnja listopad");
+        header.createCell(7).setCellValue("Potrosnja studeni");
+
+
+        int index = 1;
+        for (MeasurementRowWithPerson r : rows) {
+            Row xlsRow = sheet.createRow(rowNum++);
+            xlsRow.createCell(0).setCellValue(r.getGrad());
+            xlsRow.createCell(1).setCellValue(r.getAdresa());
+            xlsRow.createCell(2).setCellValue(r.getHepMbr());
+            xlsRow.createCell(3).setCellValue(r.getPersonName());
+            xlsRow.createCell(4).setCellValue(r.getLastMonthSum());
+            xlsRow.createCell(5).setCellValue(r.getThisMonthSum());
+            xlsRow.createCell(6).setCellValue(r.getDiffLastMonthSum());
+            xlsRow.createCell(7).setCellValue(r.getDiffThisMonthSum());
+        }
+
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        workbook.write(bos);
+        workbook.close();
+
+        return bos.toByteArray();
+    }
+
+    private byte[] writeToXlsxKumulativnoMeter(List<MeasurementRowWithPerson> rows) throws IOException {
+        XSSFWorkbook workbook = new XSSFWorkbook();
+        XSSFSheet sheet = workbook.createSheet("Export");
+
+        int rowNum = 0;
+        Row header = sheet.createRow(rowNum++);
+        header.createCell(0).setCellValue("Grad");
+        header.createCell(1).setCellValue("Adresa");
+        header.createCell(2).setCellValue("Hep Mbr");
+        header.createCell(3).setCellValue("Naziv osobe");
+        header.createCell(4).setCellValue("Serijski broj");
+        header.createCell(5).setCellValue("Listopad");
+        header.createCell(6).setCellValue("Studeni");
+        header.createCell(7).setCellValue("Potrosnja listopad");
+        header.createCell(8).setCellValue("Potrosnja studeni");
+
+
+        int index = 1;
+        for (MeasurementRowWithPerson r : rows) {
+            Row xlsRow = sheet.createRow(rowNum++);
+            xlsRow.createCell(0).setCellValue(r.getGrad());
+            xlsRow.createCell(1).setCellValue(r.getAdresa());
+            xlsRow.createCell(2).setCellValue(r.getHepMbr());
+            xlsRow.createCell(3).setCellValue(r.getPersonName());
+            xlsRow.createCell(4).setCellValue(r.getMeterCode());
+            xlsRow.createCell(5).setCellValue(r.getLastMonthSum());
+            xlsRow.createCell(6).setCellValue(r.getThisMonthSum());
+            xlsRow.createCell(7).setCellValue(r.getDiffLastMonthSum());
+            xlsRow.createCell(8).setCellValue(r.getDiffThisMonthSum());
         }
 
         ByteArrayOutputStream bos = new ByteArrayOutputStream();

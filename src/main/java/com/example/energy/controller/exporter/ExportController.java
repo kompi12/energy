@@ -87,4 +87,33 @@ public class ExportController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+
+    @PostMapping("/buildingsPersonKumulativno")
+    public ResponseEntity<byte[]> exportPersonKumulativno(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativno(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/buildingsPersonKumulativnoMeter")
+    public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMeters(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoByMeters(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 }
