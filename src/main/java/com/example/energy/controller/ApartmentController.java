@@ -4,11 +4,10 @@ import com.example.energy.model.Apartment;
 import com.example.energy.model.Meter;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.ApartmentService;
+import com.example.energy.viewmodel.ApartmentViewModel;
 import com.example.energy.viewmodel.RequestBodyPersonViewModel;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -22,6 +21,17 @@ public class ApartmentController {
     public EnergyResponse<List<Apartment>> getAllapartments() {
         try {
             List<Apartment> listOfPeople = apartmentService.findAll();
+            return EnergyResponse.success("All people found", listOfPeople);
+
+        } catch (Exception exception) {
+            exception.printStackTrace();
+            return EnergyResponse.error(500, exception.getMessage());
+        }
+    }
+    @PostMapping("/personInfo")
+    public EnergyResponse<ApartmentViewModel> getInfoAboutApartmentByPersonName(RequestBodyPersonViewModel viewModel) {
+        try {
+            ApartmentViewModel listOfPeople = apartmentService.getApartmentByPersonName(viewModel.getName());
             return EnergyResponse.success("All people found", listOfPeople);
 
         } catch (Exception exception) {

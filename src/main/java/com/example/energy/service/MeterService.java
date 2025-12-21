@@ -30,7 +30,7 @@ public class MeterService {
     }
 
     public List<Meter> findAllForPersonName(String name) {
-        return meterRepository.findByPersonFirstNameLike(name);
+        return meterRepository.findByPersonFirstNameLikeIgnoreCase(name);
     }
 
     public Boolean deactivateMeter(String code) {

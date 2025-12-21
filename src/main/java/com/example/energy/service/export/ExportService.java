@@ -371,9 +371,6 @@ public class ExportService {
     }
 
 
-
-
-
     public byte[] exportDataForBuildingsWithPerson(ExportDataViewModel dataViewModel) throws IOException {
         ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
 
@@ -629,7 +626,6 @@ public class ExportService {
                                 .collect(Collectors.toList());
 
 
-
                 // Create CSV
                 byte[] csvBytes = writeToXlsxKumulativnoMeter(rows);
                 //writeToCsvWithPersonForMeter(rows);
@@ -735,7 +731,8 @@ public class ExportService {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF}); // UTF-8 BOM
         out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
-        return out.toByteArray();    }
+        return out.toByteArray();
+    }
 
     private byte[] writeToCsvVinkovci(List<MeasurementRow> rows) throws IOException {
         StringBuilder sb = new StringBuilder();
@@ -882,6 +879,72 @@ public class ExportService {
         workbook.close();
 
         return bos.toByteArray();
+    }
+
+
+    public byte[] personDataByApartmentNumber(ApartmentViewModel dataViewModel) throws IOException {
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            Apartment apartment =
+                    apartmentRepository.findApartmentById(dataViewModel.getApartmentId());
+
+            List<MeterMeasurementExcelRow> rows =
+                    apartment.getMeters().stream()
+                            .flatMap(meter ->
+                                    meter.getMeasurements().stream()
+                                            .map(measurement ->
+                                                    new MeterMeasurementExcelRow(
+                                                            apartment.getPerson().getFirstName(),
+
+                                                            meter.getCode(),
+
+                                                            measurement.getValue(),
+                                                            measurement.getMeasureDate()
+                                                    )
+                                            )
+                            )
+                            .toList();
+
+            byte[] csvBytes = writeToCsvByPerson(rows);
+
+            // Add CSV to ZIP
+            String fileName = apartment.getPerson().getFirstName() +  ".csv";
+            ZipEntry entry = new ZipEntry(fileName);
+            zipOut.putNextEntry(entry);
+            zipOut.write(csvBytes);
+            zipOut.closeEntry();
+
+            // Optional: store locally
+            storeCsvLocally(fileName, csvBytes);
+        }
+
+
+        return zipBos.toByteArray();
+    }
+
+    private byte[] writeToCsvByPerson(List<MeterMeasurementExcelRow> rows) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        // Data rows
+        int index = 1;
+       sb.append(0).append(';').append("Naziv osobe").append(';').append("Serijski broj razdjelnika").append(';').append("Datum očitanja").append(';').append("Vrijednost očitanja").append('\n');
+
+        for (MeterMeasurementExcelRow row : rows) {
+            sb.append(index++)
+                    .append(';')
+                    .append(row.getApartmentName())
+                    .append(';')
+                    .append(row.getMeterSerial())
+                    .append(';')
+                    .append(row.getDate())
+                    .append(';')
+                    .append(row.getValue())
+                    .append('\n');
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF}); // UTF-8 BOM
+        out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
+        return out.toByteArray();
     }
 
 }

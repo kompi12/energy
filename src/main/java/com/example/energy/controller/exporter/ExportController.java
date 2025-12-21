@@ -1,6 +1,7 @@
 package com.example.energy.controller.exporter;
 
 import com.example.energy.service.export.ExportService;
+import com.example.energy.viewmodel.ApartmentViewModel;
 import com.example.energy.viewmodel.ExportDataViewModel;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
@@ -107,6 +108,21 @@ public class ExportController {
     public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMeters(@RequestBody ExportDataViewModel exportData) {
         try {
             byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoByMeters(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+
+    @PostMapping("/personDataByApartmentNumber")
+    public ResponseEntity<byte[]> personDataByApartmentNumber(@RequestBody ApartmentViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.personDataByApartmentNumber(exportData);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
                     .contentType(MediaType.parseMediaType("application/zip"))

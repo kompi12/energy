@@ -29,13 +29,16 @@ public interface MeterRepository extends JpaRepository<Meter, Long> {
 
     List<Meter> findByCodeInAndActiveTrue(Set<String> meterCodes);
 
-    @Query("SELECT m FROM Meter m " +
-            "LEFT JOIN FETCH m.apartment a " +
-            "LEFT JOIN FETCH a.building b " +
-            "LEFT JOIN FETCH b.city c " +
-            "LEFT JOIN FETCH a.person p " +
-            "WHERE p.firstName LIKE %:name%")
-    List<Meter> findByPersonFirstNameLike(@Param("name") String name);
+    @Query("""
+    SELECT m FROM Meter m
+    LEFT JOIN FETCH m.apartment a
+    LEFT JOIN FETCH a.building b
+    LEFT JOIN FETCH b.city c
+    LEFT JOIN FETCH a.person p
+    WHERE LOWER(p.firstName) LIKE LOWER(CONCAT('%', :name, '%'))
+""")
+    List<Meter> findByPersonFirstNameLikeIgnoreCase(@Param("name") String name);
+
 
 
     @Query("SELECT m FROM Meter m " +
