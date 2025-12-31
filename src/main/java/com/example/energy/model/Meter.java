@@ -2,6 +2,7 @@ package com.example.energy.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 
 import java.util.List;
 
@@ -35,6 +36,7 @@ public class Meter {
     @Column(name = "active")
     private Boolean active = true;
 
+    @BatchSize(size = 100)
     @OneToMany(mappedBy = "meter", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Measurement> measurements;
 }

@@ -1,11 +1,10 @@
 package com.example.energy.controller;
 
 import com.example.energy.model.Apartment;
-import com.example.energy.model.Meter;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.ApartmentService;
 import com.example.energy.viewmodel.ApartmentViewModel;
-import com.example.energy.viewmodel.RequestBodyPersonViewModel;
+import com.example.energy.viewmodel.dto.RequestBodyPersonViewModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -29,9 +28,9 @@ public class ApartmentController {
         }
     }
     @PostMapping("/personInfo")
-    public EnergyResponse<ApartmentViewModel> getInfoAboutApartmentByPersonName(RequestBodyPersonViewModel viewModel) {
+    public EnergyResponse<List<ApartmentViewModel>> getInfoAboutApartmentByPersonName(@RequestBody  RequestBodyPersonViewModel viewModel) {
         try {
-            ApartmentViewModel listOfPeople = apartmentService.getApartmentByPersonName(viewModel.getName());
+            List<ApartmentViewModel> listOfPeople = apartmentService.getApartmentByPersonName(viewModel.getName());
             return EnergyResponse.success("All people found", listOfPeople);
 
         } catch (Exception exception) {
@@ -39,8 +38,6 @@ public class ApartmentController {
             return EnergyResponse.error(500, exception.getMessage());
         }
     }
-
-
 
 
 }

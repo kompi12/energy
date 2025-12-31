@@ -4,6 +4,8 @@ import com.example.energy.model.*;
 import com.example.energy.repository.*;
 import com.example.energy.service.ApartmentService;
 import com.example.energy.viewmodel.*;
+import com.example.energy.viewmodel.dto.*;
+import jakarta.transaction.Transactional;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -16,7 +18,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.YearMonth;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -486,7 +487,103 @@ public class ExportService {
         return zipBos.toByteArray();
     }
 
-    public byte[] exportDataForBuildingsWithPersonKumulativno(ExportDataViewModel dataViewModel) throws IOException {
+    @Transactional
+    public byte[] exportDataForBuildingsWithPersonKumulativnoOptimizeTry(
+            ExportDataViewModel dataViewModel
+    ) throws IOException {
+
+        YearMonth thisMonth = YearMonth.of(dataViewModel.getYear(), dataViewModel.getMonth());
+        YearMonth lastMonth = thisMonth.minusMonths(1);
+
+        try (ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+             ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+
+            for (String buildingId : dataViewModel.getLists()) {
+
+                Building building = buildingRepository
+                        .findByCodeIgnoreCase(buildingId)
+                        .orElse(null);
+
+                if (building == null) {
+                    logger.warn("Building not found for id: {}", buildingId);
+                    continue;
+                }
+
+                String addresses = building.getAddresses()
+                        .stream()
+                        .map(BuildingAddress::getAddressLine)
+                        .collect(Collectors.joining(","));
+
+                String city = building.getCity().getName();
+
+                List<Apartment> apartments =
+                        apartmentRepository.findApartmentsWithMeters(building);
+
+                List<MeasurementRowWithPerson> rows = apartments.stream()
+                        .sorted(Comparator.comparingInt(
+                                a -> a.getSequence() != null ? a.getSequence() : 0
+                        ))
+                        .map(apartment -> {
+
+                            double thisMonthSum = apartment.getMeters().stream()
+                                    .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                    .flatMap(m -> m.getMeasurements().stream()) // batch-loaded
+                                    .filter(meas -> meas.getValue() != null)
+                                    .filter(meas ->
+                                            YearMonth.from(meas.getMeasureDate()).equals(thisMonth)
+                                    )
+                                    .mapToDouble(Measurement::getValue)
+                                    .sum();
+
+                            double lastMonthSum = apartment.getMeters().stream()
+                                    .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                    .flatMap(m -> m.getMeasurements().stream())
+                                    .filter(meas -> meas.getValue() != null)
+                                    .filter(meas ->
+                                            YearMonth.from(meas.getMeasureDate()).equals(lastMonth)
+                                    )
+                                    .mapToDouble(Measurement::getValue)
+                                    .sum();
+
+                            int last = (int) lastMonthSum;
+                            int current = (int) thisMonthSum;
+
+                            return new MeasurementRowWithPerson(
+                                    apartment.getHepMBR(),
+                                    apartment.getPerson() != null
+                                            ? apartment.getPerson().getFirstName()
+                                            : "",
+                                    last,
+                                    current,
+                                    Math.max(last, 0),
+                                    Math.max(current - last, 0),
+                                    addresses,
+                                    city
+                            );
+                        })
+                        .toList();
+
+                byte[] csvBytes = writeToXlsxKumulativno(rows);
+
+                String fileName = building.getName()
+                        + "_" + dataViewModel.getDate()
+                        + ".csv";
+
+                zipOut.putNextEntry(new ZipEntry(fileName));
+                zipOut.write(csvBytes);
+                zipOut.closeEntry();
+
+                storeCsvLocally(fileName, csvBytes);
+            }
+
+            return zipBos.toByteArray();
+        }
+    }
+
+
+
+
+    public byte[] exportDataForBuildingsWithPersonKumulativnoOld(ExportDataViewModel dataViewModel) throws IOException {
         ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
 
         try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
@@ -946,5 +1043,47 @@ public class ExportService {
         out.write(sb.toString().getBytes(StandardCharsets.UTF_8));
         return out.toByteArray();
     }
+
+    private MeasurementRowWithPerson buildRow(
+            Apartment apartment,
+            YearMonth thisMonth,
+            YearMonth lastMonth,
+            String addresses,
+            String city
+    ) {
+        double thisMonthSum = 0;
+        double lastMonthSum = 0;
+
+        for (Meter meter : apartment.getMeters()) {
+            if (!Boolean.TRUE.equals(meter.getActive())) continue;
+
+            for (Measurement m : meter.getMeasurements()) {
+                if (m.getValue() == null) continue;
+
+                YearMonth ym = YearMonth.from(m.getMeasureDate());
+
+                if (ym.equals(thisMonth)) {
+                    thisMonthSum += m.getValue();
+                } else if (ym.equals(lastMonth)) {
+                    lastMonthSum += m.getValue();
+                }
+            }
+        }
+
+        int last = (int) lastMonthSum;
+        int current = (int) thisMonthSum;
+
+        return new MeasurementRowWithPerson(
+                apartment.getHepMBR(),
+                apartment.getPerson() != null ? apartment.getPerson().getFirstName() : "",
+                last,
+                current,
+                Math.max(last, 0),
+                Math.max(current - last, 0),
+                addresses,
+                city
+        );
+    }
+
 
 }

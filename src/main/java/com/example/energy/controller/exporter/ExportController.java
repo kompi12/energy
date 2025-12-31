@@ -2,7 +2,7 @@ package com.example.energy.controller.exporter;
 
 import com.example.energy.service.export.ExportService;
 import com.example.energy.viewmodel.ApartmentViewModel;
-import com.example.energy.viewmodel.ExportDataViewModel;
+import com.example.energy.viewmodel.dto.ExportDataViewModel;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import java.io.IOException;
@@ -93,7 +93,7 @@ public class ExportController {
     @PostMapping("/buildingsPersonKumulativno")
     public ResponseEntity<byte[]> exportPersonKumulativno(@RequestBody ExportDataViewModel exportData) {
         try {
-            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativno(exportData);
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoOld(exportData);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
                     .contentType(MediaType.parseMediaType("application/zip"))

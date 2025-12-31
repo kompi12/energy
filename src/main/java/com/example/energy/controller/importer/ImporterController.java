@@ -1,23 +1,11 @@
 package com.example.energy.controller.importer;
 
-import com.example.energy.model.City;
-import com.example.energy.model.Meter;
 import com.example.energy.repository.CityRepository;
-import com.example.energy.repository.MeterRepository;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.importer.ImporterService;
-import com.example.energy.viewmodel.ExportDataViewModel;
-import com.example.energy.viewmodel.MissingMetersDataViewModel;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import com.example.energy.viewmodel.dto.MissingMetersDataViewModel;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.util.List;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/import")

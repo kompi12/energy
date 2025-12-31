@@ -1,8 +1,7 @@
-package com.example.energy.viewmodel;
+package com.example.energy.viewmodel.dto;
 
 
 import lombok.Getter;
-import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Getter

@@ -8,21 +8,21 @@ import com.example.energy.viewmodel.ApartmentViewModel;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class ApartmentService {
     private final ApartmentRepository apartmentRepository;
-    private final PersonRepository personRepository;
 
     public ApartmentService(ApartmentRepository apartmentRepository, PersonRepository personRepository) {
         this.apartmentRepository = apartmentRepository;
-        this.personRepository = personRepository;
     }
-    public ApartmentViewModel getApartmentByPersonName(String name) {
-        Person person = personRepository.findByFirstNameIgnoreCase(name).orElse(null);
-        Apartment apartment = apartmentRepository.findByPerson(person);
-        return ApartmentViewModel.createViewModel(apartment);
+    public List<ApartmentViewModel> getApartmentByPersonName(String name) {
+        List<ApartmentViewModel> apartmentViewModels = new ArrayList<>();
+        List<Apartment> apartment = apartmentRepository.findApartmentsByPersonFirstNameLike(name);
+        apartment.forEach(a ->apartmentViewModels.add(ApartmentViewModel.createViewModel(a)));
+        return apartmentViewModels;
     }
     public List<Apartment> findAll() {
         return apartmentRepository.findAll();

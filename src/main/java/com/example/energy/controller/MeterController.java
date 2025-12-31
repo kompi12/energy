@@ -4,8 +4,9 @@ import com.example.energy.model.Meter;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.MeterService;
 import com.example.energy.viewmodel.MeterViewModel;
-import com.example.energy.viewmodel.RequestBodyPersonMultipleViewModel;
-import com.example.energy.viewmodel.RequestBodyPersonViewModel;
+import com.example.energy.viewmodel.dto.MeterPersonViewModel;
+import com.example.energy.viewmodel.dto.RequestBodyPersonMultipleViewModel;
+import com.example.energy.viewmodel.dto.RequestBodyPersonViewModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,7 +15,6 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 @RestController
@@ -36,7 +36,7 @@ public class MeterController {
     }
 
     @RequestMapping("/meterForPerson")
-    public EnergyResponse<List<MeterViewModel>> getAllMetersForPerson(@RequestBody RequestBodyPersonViewModel viewModel) {
+    public EnergyResponse<List<MeterViewModel>> getMetersForPerson(@RequestBody RequestBodyPersonViewModel viewModel) {
         try {
             List<MeterViewModel> listOfMeters = new ArrayList<>();
             List<Meter> listOfMetersForPerson = meterService.findAllForPersonName(viewModel.getName());
@@ -51,6 +51,19 @@ public class MeterController {
 
 
             return EnergyResponse.success("All meters found", listOfMeters);
+
+        } catch (Exception exception) {
+            exception.printStackTrace();
+            return EnergyResponse.error(500, exception.getMessage());
+        }
+    }
+
+    @RequestMapping("/allMeterForPerson")
+    public EnergyResponse<MeterPersonViewModel> getAllMetersForPerson(@RequestBody RequestBodyPersonViewModel viewModel) {
+        try {
+
+            MeterPersonViewModel meterPersonViewModel = meterService.findAllForPersonMeter(viewModel.getName());
+            return EnergyResponse.success("All meters found", meterPersonViewModel);
 
         } catch (Exception exception) {
             exception.printStackTrace();

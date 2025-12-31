@@ -4,9 +4,9 @@ import com.example.energy.model.Apartment;
 import com.example.energy.model.Meter;
 import com.example.energy.repository.ApartmentRepository;
 import com.example.energy.repository.MeterRepository;
-import com.example.energy.viewmodel.RequestBodyPersonMultipleViewModel;
-import com.example.energy.viewmodel.RequestBodyPersonViewModel;
-import lombok.RequiredArgsConstructor;
+import com.example.energy.viewmodel.dto.MeterPersonViewModel;
+import com.example.energy.viewmodel.dto.RequestBodyPersonMultipleViewModel;
+import com.example.energy.viewmodel.dto.RequestBodyPersonViewModel;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -31,6 +31,26 @@ public class MeterService {
 
     public List<Meter> findAllForPersonName(String name) {
         return meterRepository.findByPersonFirstNameLikeIgnoreCase(name);
+    }
+
+    public MeterPersonViewModel findAllForPersonMeter(String name) {
+        MeterPersonViewModel meterPersonViewModel = new MeterPersonViewModel();
+
+        List<Meter> listOfMetersForPerson = meterRepository.findByPersonFirstNameLikeIgnoreCase(name);
+
+        List<String> active = listOfMetersForPerson.stream()
+                .filter(Meter::getActive)
+                .map(Meter::getCode)
+                .toList();
+
+        List<String> deactive = listOfMetersForPerson.stream()
+                .filter(m -> !m.getActive())
+                .map(Meter::getCode)
+                .toList();
+
+        meterPersonViewModel.setActive(active);
+        meterPersonViewModel.setDeactivated(deactive);
+        return meterPersonViewModel;
     }
 
     public Boolean deactivateMeter(String code) {

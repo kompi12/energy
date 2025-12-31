@@ -1,9 +1,8 @@
-package com.example.energy.viewmodel;
+package com.example.energy.viewmodel.dto;
 
 import lombok.Getter;
 import lombok.Setter;
 
-import java.time.LocalDate;
 import java.util.List;
 
 @Getter
