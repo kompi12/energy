@@ -7,6 +7,8 @@ import com.example.energy.viewmodel.dto.MissingMetersDataViewModel;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/import")
 public class ImporterController {
@@ -38,10 +40,10 @@ public class ImporterController {
 
     @PostMapping
     @RequestMapping("/checkBuildingsTechem")
-    public EnergyResponse checkBuildingsTechem(@RequestParam("file") MultipartFile file) {
+    public EnergyResponse<List<String>> checkBuildingsTechem(@RequestParam("file") MultipartFile file) {
         try {
-            //importerService.checkBuildingsTechem(file);
-            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+           List<String> missingBuildings =  importerService.checkBuildingsTechem(file);
+            return EnergyResponse.success("File uploaded successfully", missingBuildings);
 
         } catch (Exception ex) {
             ex.printStackTrace();

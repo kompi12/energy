@@ -23,6 +23,7 @@ import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -312,28 +313,30 @@ public class ImporterService {
                 label, rows, createdMeters, existingMeters);
     }
 
-    private void checkBuildingsTechem(Sheet sheet, DataFormatter fmt, String label) {
-        if (sheet == null) return;
+    public List<String> checkBuildingsTechem(MultipartFile file) throws IOException {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
 
-        int createdMeters = 0, existingMeters = 0, rows = 0;
-        List<String> buildingCodes = new ArrayList<>();
-        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-            Row r = sheet.getRow(i);
-            if (r == null) continue;
-            rows++;
+            Sheet sheet = wb.getSheetAt(0);
+            DataFormatter fmt = new DataFormatter();
 
-            String buildingCode = s(fmt, r.getCell(1)); // sifraZgrade
-            buildingCodes.add(buildingCode);
+            List<String> missingBuildings = new ArrayList<>();
+            Set<String> buildingCodes = new HashSet<>();
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                String buildingCode = fmt.formatCellValue(r.getCell(0)).trim();
+                if (!buildingCode.isEmpty()) buildingCodes.add(buildingCode);
+            }
 
+            List<Building> buildings = buildingRepository.findAll();
+            for (Building building : buildings) {
+                if(building.getTechem() == null) continue;
+                if(building.getTechem().equals("1") && !buildingCodes.contains(building.getCode())) {
+                    missingBuildings.add(building.getCode());
+                }
+            }
+            return missingBuildings;
         }
-
-        List<Building> listOfBuilding = buildingRepository.findAll();
-
-       // listOfBuilding.stream().filter(building -> building.get == "1").filter()
-
-
-        log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
-                label, rows, createdMeters, existingMeters);
     }
 
 
