@@ -588,7 +588,7 @@ public class ImporterService {
 
 
 
-
+    @Transactional
     public void importXML(MultipartFile file) {
             int createdMeasurements = 0;
 
