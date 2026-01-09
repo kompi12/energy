@@ -1,5 +1,6 @@
 package com.example.energy.controller.exporter;
 
+import com.example.energy.service.export.ExportExcelService;
 import com.example.energy.service.export.ExportService;
 import com.example.energy.viewmodel.ApartmentViewModel;
 import com.example.energy.viewmodel.dto.ExportDataViewModel;
@@ -12,9 +13,11 @@ import java.io.IOException;
 public class ExportController {
 
     private final ExportService exportService;
+    private final ExportExcelService exportExcelService;
 
-    public ExportController(ExportService exportService) {
+    public ExportController(ExportService exportService, ExportExcelService exportExcelService) {
         this.exportService = exportService;
+        this.exportExcelService = exportExcelService;
     }
 
     @PostMapping("/buildings")
@@ -93,7 +96,9 @@ public class ExportController {
     @PostMapping("/buildingsPersonKumulativno")
     public ResponseEntity<byte[]> exportPersonKumulativno(@RequestBody ExportDataViewModel exportData) {
         try {
-            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoOld(exportData);
+            byte[] zipResponse = exportExcelService.exportByApartments(exportData);
+
+            //byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoOld(exportData);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
                     .contentType(MediaType.parseMediaType("application/zip"))
@@ -107,7 +112,23 @@ public class ExportController {
     @PostMapping("/buildingsPersonKumulativnoMeter")
     public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMeters(@RequestBody ExportDataViewModel exportData) {
         try {
-            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoByMeters(exportData);
+             byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoByMeters(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/buildingsPersonKumulativnoMeterDynamic")
+    public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMetersDynamic(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportExcelService.exportByMeters(exportData);
+
+           // byte[] zipResponse = exportExcelService.exportDataForBuildingsWithPersonKumulativnoByMetersDynamic(exportData);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
                     .contentType(MediaType.parseMediaType("application/zip"))
