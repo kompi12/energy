@@ -355,7 +355,7 @@ public class ExportService {
 
         // Write all rows into a single CSV
         byte[] csvBytes = writeToCsvVinkovci(allRows);
-        String csvFileName = "ALL_BUILDINGS_" + dataViewModel.getDate() + ".csv";
+        String csvFileName = "VINKOVCI_PO_LJUDIMA_" + dataViewModel.getDate() + ".csv";
 
         // Create ZIP containing the CSV
         ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
