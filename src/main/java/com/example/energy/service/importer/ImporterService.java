@@ -1,11 +1,10 @@
 package com.example.energy.service.importer;
 
+import com.example.energy.enums.WaterMeterType;
 import com.example.energy.model.*;
 
-import com.example.energy.repository.ApartmentRepository;
-import com.example.energy.repository.BuildingRepository;
-import com.example.energy.repository.MeasurementRepository;
-import com.example.energy.repository.MeterRepository;
+import com.example.energy.repository.*;
+import com.example.energy.service.ApartmentUpsertService;
 import com.example.energy.service.MeasurementService;
 import com.example.energy.service.MeasurementUpsertService;
 import com.example.energy.service.MeterUpsertService;
@@ -53,8 +52,11 @@ public class ImporterService {
     private static final Logger log = LoggerFactory.getLogger(ImporterService.class);
 
     private final MeterUpsertService meterUpsertService;
+    private final ApartmentUpsertService apartmentUpsertService;
+
 
     private final MeterRepository meterRepository;
+    private final WaterMeterRepository waterMeterRepository;
     private final MeasurementRepository measurementRepository;
     private final ApartmentRepository apartmentRepository;
     private final MeasurementService measurementService;
@@ -63,7 +65,9 @@ public class ImporterService {
 
     public ImporterService(
             MeterUpsertService meterUpsertService,
+            ApartmentUpsertService apartmentUpsertService,
             MeterRepository meterRepository,
+            WaterMeterRepository waterMeterRepository,
             MeasurementRepository measurementRepository,
             ApartmentRepository apartmentRepository,
             MeasurementService measurementService,
@@ -71,12 +75,14 @@ public class ImporterService {
 
             BuildingRepository buildingRepository) {
         this.meterUpsertService = meterUpsertService;
+        this.apartmentUpsertService = apartmentUpsertService;
         this.meterRepository = meterRepository;
         this.measurementRepository = measurementRepository;
         this.apartmentRepository = apartmentRepository;
         this.measurementService = measurementService;
         this.measurementUpsertService = measurementUpsertService;
         this.buildingRepository = buildingRepository;
+        this.waterMeterRepository = waterMeterRepository;
     }
     /**
      * Imports *monthly* measurements from the first sheet.
@@ -186,7 +192,7 @@ public class ImporterService {
             DataFormatter fmt = new DataFormatter();
 
             // ---- Sheet 0 ----
-            importInitialSheetAll(wb.getSheetAt(0), fmt, /*logLabel*/"sheet2");
+            importInitialSheet(wb.getSheetAt(0), fmt, /*logLabel*/"po vodomjerima");
 
             // ---- Sheet 3 ----
 //            if (wb.getNumberOfSheets() > 2) {
@@ -225,41 +231,50 @@ public class ImporterService {
             if (r == null) continue;
             rows++;
 
-            String buildingCode = s(fmt, r.getCell(1)); // sifraZgrade
-            String city         = s(fmt, r.getCell(2));
-            String address      = s(fmt, r.getCell(3));
-            String mbr          = s(fmt, r.getCell(4));
-            String personName   = s(fmt, r.getCell(5));
-            String meterCode    = s(fmt, r.getCell(6));
-            String power        = s(fmt, r.getCell(7));
+            String ssn = s(fmt, r.getCell(1));
+            String mjerno_mjesto = s(fmt, r.getCell(3));
+            String tip = s(fmt, r.getCell(5));
 
-            if (meterCode == null || mbr == null || city == null) {
-                log.debug("[{}] Row {} skipped: required data missing (meterCode/mbr/city)", label, i);
+            Optional<WaterMeter> waterMeter = waterMeterRepository.findByCode(ssn);
+            if(waterMeter.isPresent()) {
+                continue;
+            }
+            Optional<Apartment> existing = apartmentRepository.findByMjernoMjesto(mjerno_mjesto);
+            if (existing.isEmpty()) {
+                log.info("Mjerno mjsto not found [{}]:", mjerno_mjesto);
                 continue;
             }
 
-            Optional<Meter> existing = meterRepository.findByCode(meterCode);
-            if (existing.isPresent()) {
-                existingMeters++;
-                continue;
+            WaterMeter wm = new WaterMeter();
+            wm.setCode(ssn);
+            wm.setApartment(existing.get());
+            switch (tip) {
+                case "1":
+                    wm.setWaterMeterType(WaterMeterType.COLD_TECHEM);
+                    break;
+                case "4":
+                    wm.setWaterMeterType(WaterMeterType.HOT_KAMSTRUP);
+                    break;
+                case "2":
+                    wm.setWaterMeterType(WaterMeterType.COLD_KAMSTRUP);
+                    break;
+                case "3":
+                    wm.setWaterMeterType(WaterMeterType.HOT_TECHEM);
+                    break;
             }
+                waterMeterRepository.save(wm);
 
-            // Find-or-create full graph; address will be attached to the building (if provided)
-            Meter created = meterUpsertService.findOrCreateMeter(
-                    mbr, address, city, meterCode, power, buildingCode, personName,""
-            );
-
-            if (created != null) {
                 createdMeters++;
                 if ((createdMeters % 200) == 0) {
-                    meterRepository.flush();
+                    waterMeterRepository.flush();
                 }
+
             }
+
+            log.info("Initial import [{}]: rows={}, cretaedApartments={}, existingMeters={}",
+                    label, rows, createdMeters, existingMeters);
         }
 
-        log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
-                label, rows, createdMeters, existingMeters);
-    }
 
 
 
@@ -273,10 +288,10 @@ public class ImporterService {
             if (r == null) continue;
             rows++;
 
-            String buildingCode = s(fmt, r.getCell(1)); // sifraZgrade
+            String buildingCode = s(fmt, r.getCell(3)); // sifraZgrade
             String city         = "Zagreb";
-            String address      = s(fmt, r.getCell(0));
-            //String mbr          = s(fmt, r.getCell(4));
+            String address      = s(fmt, r.getCell(2));
+            String mbr          = s(fmt, r.getCell(4));
             String personName   = s(fmt, r.getCell(2));
             String siemensSN = s(fmt, r.getCell(3));
             String meterCode    = s(fmt, r.getCell(5));
@@ -356,7 +371,7 @@ public class ImporterService {
 
             // If you kept ApartmentRepository.findByMbr, you can call it here if desired
             // Optional<Apartment> a = apartmentRepository.findByMbr(mbr);
-            // if (a.isEmpty()) log.info("User doesn't exist (sheet2): {}", personName);
+            // if (a.isEmpty()) log.info( doesn't exist (sheet2): {}", personName);
 
             // Since we’ve centralized creation in MeterUpsertService, this remains a simple audit log.
             log.debug("Audit (sheet2) row {} – person='{}', mbr='{}'", i, personName, mbr);

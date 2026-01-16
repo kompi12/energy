@@ -1,0 +1,2 @@
+ALTER TABLE building
+    ADD COLUMN IF NOT EXISTS mjernoMjesto VARCHAR(255) NULL;

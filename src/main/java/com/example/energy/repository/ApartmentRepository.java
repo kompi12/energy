@@ -17,6 +17,8 @@ public interface ApartmentRepository extends JpaRepository<Apartment, Long> {
 
     Optional<Apartment> findByHepMBR(String hepMBR);
 
+    Optional<Apartment> findByMjernoMjesto(String mjernoMjesto);
+
     Apartment findApartmentById(Long id);
 
     Apartment findByPerson(Person person);

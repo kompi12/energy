@@ -35,11 +35,14 @@ public class Apartment {
     @JoinColumn(name = "person_id", foreignKey = @ForeignKey(name = "fk_apartment_person"))
     private Person person;
 
-    @Column(nullable = false, length = 100)
+    @Column(name = "mbr",nullable = true, length = 100)
     private String mbr;
 
     @Column(name = "hep_mbr", length = 100)
     private String hepMBR;
+
+    @Column(name = "mjerno_mjesto", length = 100)
+    private String mjernoMjesto;
 
     @Column
     private Integer priority;

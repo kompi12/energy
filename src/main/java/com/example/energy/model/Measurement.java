@@ -31,6 +31,11 @@ public class Measurement {
             foreignKey = @ForeignKey(name = "fk_measurement_meter"))
     private Meter meter;
 
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "water_meter", nullable = false,
+            foreignKey = @ForeignKey(name = "fk_measurement_water_meter"))
+    private WaterMeter waterMeter;
+
     @Column(name = "measure_date", nullable = false)
     private LocalDate measureDate;
 
