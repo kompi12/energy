@@ -26,13 +26,13 @@ public class Measurement {
     @Column(name = "measurement_id")
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "meter_id", nullable = false,
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "meter_id",
             foreignKey = @ForeignKey(name = "fk_measurement_meter"))
     private Meter meter;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "water_meter", nullable = false,
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "water_meter",
             foreignKey = @ForeignKey(name = "fk_measurement_water_meter"))
     private WaterMeter waterMeter;
 
