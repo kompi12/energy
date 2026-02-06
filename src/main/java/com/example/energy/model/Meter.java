@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.BatchSize;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Entity
@@ -35,6 +36,9 @@ public class Meter {
 
     @Column(name = "active")
     private Boolean active = true;
+
+    @Column(name = "installation_date")
+    private LocalDate installationDate;
 
     @BatchSize(size = 100)
     @OneToMany(mappedBy = "meter", cascade = CascadeType.ALL, orphanRemoval = true)

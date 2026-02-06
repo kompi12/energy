@@ -109,6 +109,21 @@ public class ExportController {
         }
     }
 
+    @PostMapping("/buildingsPersonVinkovci")
+    public ResponseEntity<byte[]> exportPersonKumulativnoVinkovci(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportExcelService.exportByApartmentsVinkovci(exportData);
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
     @PostMapping("/buildingsPersonKumulativnoMeter")
     public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMeters(@RequestBody ExportDataViewModel exportData) {
         try {

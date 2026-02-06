@@ -15,6 +15,6 @@ public class MeterMeasurementExcelRow {
 
     private String meterSerial;
 
-    private Integer value;
+    private Double value;
     private LocalDate date;
 }

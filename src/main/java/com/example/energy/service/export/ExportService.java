@@ -997,7 +997,7 @@ public class ExportService {
 
                                                             meter.getCode(),
 
-                                                            measurement.getValue(),
+                                                             measurement.getValue(),
                                                             measurement.getMeasureDate()
                                                     )
                                             )

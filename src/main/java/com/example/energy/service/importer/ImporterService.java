@@ -154,7 +154,7 @@ public class ImporterService {
                 Measurement m = new Measurement();
                 m.setMeter(meter);
                 m.setMeasureDate(date);
-                m.setValue(value);
+                m.setValue(Double.valueOf(value));
                 m.setCreatedAt(Instant.now());
                 m.setCreatedBy("Monthly Import " + YearMonth.now());
 
@@ -534,7 +534,7 @@ public class ImporterService {
                 Meter meter = meterRepository.findByCode(sn).orElseThrow(null);
                 if(meter != null) {
                     Measurement measurement = new Measurement();
-                    measurement.setValue(Integer.valueOf(vrijednost));
+                    measurement.setValue(Double.valueOf(Integer.valueOf(vrijednost)));
                     measurement.setMeasureDate(LocalDate.parse(datum));
                     measurement.setMeter(meter);
                     measurementRepository.save(measurement);
@@ -570,30 +570,27 @@ public class ImporterService {
 
         int updatedMeters = 0, existingMeters = 0, rows = 0;
 
-        for (int i = 2498; i <= sheet.getLastRowNum(); i++) {
+        for (int i = 0; i <= sheet.getLastRowNum(); i++) {
             Row r = sheet.getRow(i);
             if (r == null) continue;
             rows++;
 
-            String seq = s(fmt, r.getCell(4));
-            String naziv         = s(fmt, r.getCell(5));
-            String mbr      = s(fmt, r.getCell(6));
-            String hep_mbr          = s(fmt, r.getCell(7));
+            String seq = s(fmt, r.getCell(0));
+            String mbr = s(fmt, r.getCell(1));
 
-            if(seq == null || mbr == null || hep_mbr == null) {
-                log.info("Missing for  import hep_mbr = {}, seq={}, mbr={}",
-                        seq, mbr, hep_mbr);
+
+            if(seq == null || mbr == null ) {
+                log.info("Missing for  import hep_mbr = {}, seq={}",
+                        seq, mbr);
                 continue;
             }
 
             Optional<Apartment> apartment = apartmentRepository.findByMbr(mbr);
             if(apartment.isPresent()) {
                 apartment.get().setSequence(Integer.valueOf(seq));
-                apartment.get().setHepMBR(hep_mbr);
                 apartmentRepository.save(apartment.get());
                 updatedMeters++;
             }
-
 
         }
 
@@ -712,6 +709,8 @@ public class ImporterService {
             }
         }
 
+
+
 //        int createdMeasurements = 0;
 //
 //        try (InputStream is = file.getInputStream()) {
@@ -818,4 +817,115 @@ public class ImporterService {
         }
         return input;
     }
+
+    @Transactional
+    public List<String> extractFabnrForDate(MultipartFile file) {
+
+        List<String> result = new ArrayList<>();
+
+        try (InputStream is = file.getInputStream()) {
+
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+
+                Element measuredev = (Element) measuredevList.item(i);
+
+                // ---- fabnr
+                String fabnr = safeGetText(measuredev, "fabnr");
+                if (fabnr.isEmpty()) {
+                    continue;
+                }
+
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                String dateValue = null;
+                int hcaSum = 0;
+                boolean hasHca = false;
+                int hcaTotal = 0;
+
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+
+                    String dimension = safeGetText(dp, "dimension");
+                    String value = safeGetText(dp, "value");
+
+                    // ---- DATE
+                    if ("date".equalsIgnoreCase(dimension)) {
+                        dateValue = value;
+                    }
+
+                    // ---- H.C.A. SUM
+                    if ("H.C.A.".equalsIgnoreCase(dimension)) {
+                        if (value != null && !value.isEmpty() && !value.contains("--")) {
+                            try {
+                                hcaSum += Integer.parseInt(value);
+                                hasHca = true;
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+                        hcaTotal++;
+                        if (hcaTotal >= 4) {
+                            break;
+                        }
+                    }
+                }
+
+                // ---- mora biti datum 31.12.25
+                if (!"31.12.25".equals(dateValue) && !"31.12.2025".equals(dateValue)) {
+                    continue;
+                }
+
+                // ---- mora postojati barem jedan H.C.A.
+                if (!hasHca) {
+                    continue;
+                }
+
+                // ---- check for duplicates
+                List<Meter> meters = meterRepository.findAllByCodeAndActive(fabnr,true);
+                if (meters.isEmpty()) {
+                    continue; // no meter found
+                }
+                if (meters.size() > 1) {
+                    throw new RuntimeException(
+                            "Duplicate meters found for code: " + fabnr + " (" + meters.size() + " entries)"
+                    );
+                }
+
+                Meter meter = meters.get(0);
+                LocalDate targetDate = LocalDate.of(2026, 1, 24);
+
+                // Find the measurement with the target date
+                Measurement measurement = meter.getMeasurements().stream()
+                        .filter(m -> m.getMeasureDate().equals(targetDate))
+                        .findFirst()
+                        .orElse(null);
+
+                if (measurement != null) {
+                    measurement.setValue((double) hcaSum);
+                    measurementRepository.save(measurement);
+                }
+
+                // ---- rezultat
+                result.add(
+                        "<fabnr>" + fabnr + "</fabnr> | " +
+                                "date=" + dateValue + " | " +
+                                "HCA_SUM=" + hcaSum
+                );
+            }
+
+        } catch (Exception e) {
+            log.error("XML processing failed", e);
+            throw new RuntimeException("XML processing failed", e);
+        }
+
+        return result;
+    }
+
+
 }

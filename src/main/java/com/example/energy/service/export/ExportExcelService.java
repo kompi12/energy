@@ -97,10 +97,72 @@ public class ExportExcelService {
 
 
     }
+
+    public <T> byte[] exportDataDynamicVinkovic(
+            ExportDataViewModel dataViewModel,
+            ApartmentRowMapper<T> mapper,
+            BiFunction<List<T>, List<YearMonth>, byte[]> writer
+    ) throws IOException {
+
+        List<T> allRows = new ArrayList<>();
+
+        List<YearMonth> months =
+                getMonthsFromOctober(
+                        dataViewModel.getYear(),
+                        dataViewModel.getMonth()
+                );
+
+        // 🔹 skupljamo sve podatke
+        for (String buildingId : dataViewModel.getLists()) {
+
+            Optional<Building> buildingOpt =
+                    buildingRepository.findByCodeIgnoreCase(buildingId);
+
+            if (buildingOpt.isEmpty()) {
+                logger.warn("Building not found for id: {}", buildingId);
+                continue;
+            }
+
+            Building building = buildingOpt.get();
+
+            building.getApartments().stream()
+                    .filter(a -> Boolean.TRUE.equals(a.getActive()))
+                    .sorted(Comparator.comparingInt(a ->
+                            Optional.ofNullable(a.getSequence()).orElse(Integer.MAX_VALUE)
+                    ))
+                    .flatMap(a -> {
+                        try {
+                            return mapper.map(a, months);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .forEach(allRows::add);
+        }
+
+        // 🔹 jedan jedini file
+        byte[] fileBytes = writer.apply(allRows, months);
+
+        String fileName =
+                "VINKOVCI_" + dataViewModel.getDate() + ".xlsx";
+
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            zipOut.putNextEntry(new ZipEntry(fileName));
+            zipOut.write(fileBytes);
+            zipOut.closeEntry();
+        }
+
+        helperService.storeCsvLocally(fileName, fileBytes);
+
+        return zipBos.toByteArray();
+    }
+
     @SneakyThrows
     public byte[] exportByMeters(ExportDataViewModel vm) throws IOException {
 
-        return exportDataDynamic(
+        return exportDataDynamicVinkovic(
                 vm,
                 (apartment, months) ->
                         apartment.getMeters().stream()
@@ -166,6 +228,56 @@ public class ExportExcelService {
                             )
                     );
                 },
+                this::writeToXlsxKumulativnoMeterDynamicSafe
+        );
+    }
+
+    @SneakyThrows
+    public byte[] exportByApartmentsVinkovci(ExportDataViewModel vm) {
+
+        return exportDataDynamicVinkovic(
+                vm,
+
+                (apartment, months) -> {
+
+                    if (apartment.getSequence() == null ||
+                            apartment.getMbr() == null) {
+                        return Stream.empty();
+                    }
+
+                    // kumulativ po mjesecima (SVE mjere svih brojila)
+                    Map<YearMonth, Integer> cumulative =
+                            apartment.getMeters().stream()
+                                    .filter(m -> Boolean.TRUE.equals(m.getActive()))
+                                    .map(this::sumMeasurementsByMonth)
+                                    .flatMap(m -> m.entrySet().stream())
+                                    .collect(Collectors.groupingBy(
+                                            Map.Entry::getKey,
+                                            LinkedHashMap::new,
+                                            Collectors.summingInt(Map.Entry::getValue)
+                                    ));
+
+                    Map<YearMonth, MonthValue> monthly =
+                            calculateMonthlyValues(cumulative, months);
+
+                    return Stream.of(
+                            new MeasurementRowWithPersonDynamic(
+                                    apartment.getHepMBR(),
+                                    apartment.getPerson() != null
+                                            ? apartment.getPerson().getFirstName()
+                                            : "",
+                                    apartment.getBuilding().getCity().getName(),
+                                    apartment.getBuilding().getAddresses().stream()
+                                            .map(BuildingAddress::getAddressLine)
+                                            .collect(Collectors.joining(",")),
+                                    // ovdje spremamo sequence (ključno za sortiranje u Excelu)
+                                    String.valueOf(apartment.getSequence()),
+                                    monthly
+                            )
+                    );
+                },
+
+                // WRITER
                 this::writeToXlsxKumulativnoMeterDynamicSafe
         );
     }

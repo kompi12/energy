@@ -46,4 +46,8 @@ public interface MeterRepository extends JpaRepository<Meter, Long> {
     Optional<Meter> findByCodeAndActiveTrue(String pNumber);
 
     Optional<Meter> findByCodeAndApartment_Id(String code, Long apartmentId);
+
+    List<Meter> findAllByCode(String code);
+
+    List<Meter> findAllByCodeAndActive(String code, Boolean active);
 }

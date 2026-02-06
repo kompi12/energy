@@ -40,7 +40,7 @@ public class Measurement {
     private LocalDate measureDate;
 
     @Column(name = "value")
-    private Integer value;
+    private Double value;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.BatchSize;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Entity
@@ -40,6 +41,9 @@ public class WaterMeter {
     @BatchSize(size = 100)
     @OneToMany(mappedBy = "waterMeter", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Measurement> measurements;
+
+    @Column(name = "installation_date")
+    private LocalDate installationDate;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "water_meter_type", nullable = false, length = 30)

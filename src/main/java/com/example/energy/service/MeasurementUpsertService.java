@@ -78,7 +78,7 @@ public class MeasurementUpsertService {
 
         Measurement newMeasurement = new Measurement();
         newMeasurement.setMeasureDate(dateLocal);
-        newMeasurement.setValue(Integer.parseInt(value));
+        newMeasurement.setValue((double) Integer.parseInt(value));
         newMeasurement.setMeter(meter.get());
         return  measurementRepository.save(newMeasurement);
     }

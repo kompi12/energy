@@ -23,7 +23,7 @@ public class Apartment {
     @Column(name = "apartment_id")
     private Long id;
 
-    @Column(name = "apartment_number", length = 20)
+    @Column(name = "apartment_number", length = 1000)
     private String apartmentNumber;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
@@ -41,6 +41,12 @@ public class Apartment {
     @Column(name = "hep_mbr", length = 100)
     private String hepMBR;
 
+    @Column(name = "hep_mbr_water", length = 100)
+    private String hepMBRWater;
+
+    @Column(name = "decimalno")
+    private Double decimalno;
+
     @Column(name = "mjerno_mjesto", length = 100)
     private String mjernoMjesto;
 
@@ -55,4 +61,7 @@ public class Apartment {
 
     @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Meter> meters;
+
+    @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<WaterMeter> waterMeters;
 }

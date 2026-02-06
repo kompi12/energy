@@ -123,5 +123,18 @@ public class MeterController {
         }
     }
 
+    @RequestMapping("/createMetersDeactivateOld")
+    public EnergyResponse<Boolean> createMetersDeactivateOld(@RequestBody RequestBodyPersonMultipleViewModel viewModel) {
+        try {
+            Boolean createdMeter = meterService.createMetersDeactivateOld(viewModel);
+
+            return EnergyResponse.success("All meters found", createdMeter);
+
+        } catch (Exception exception) {
+            exception.printStackTrace();
+            return EnergyResponse.error(500, exception.getMessage());
+        }
+    }
+
 
 }

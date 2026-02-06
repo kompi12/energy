@@ -124,6 +124,15 @@ public class ImporterController {
         }
     }
 
+    @PostMapping(value = "/print-fabnr", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public EnergyResponse<List<String>> printFabnrFromXml(
+            @RequestParam("file") MultipartFile file) {
+
+        List<String> fabnrs = importerService.extractFabnrForDate(file);
+
+        return EnergyResponse.success("Success",fabnrs);
+    }
+
     @PostMapping
     @RequestMapping("/importTechem")
     public EnergyResponse importTechem(@RequestParam("file") MultipartFile file) {

@@ -32,6 +32,8 @@ public class ApartmentViewModel {
 
 
 
+
+
     public static ApartmentViewModel createViewModel(Apartment apartment){
         ApartmentViewModel vm = new ApartmentViewModel();
         vm.setApartmentNumber(apartment.getApartmentNumber());

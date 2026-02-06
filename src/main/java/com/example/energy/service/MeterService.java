@@ -9,7 +9,9 @@ import com.example.energy.viewmodel.dto.RequestBodyPersonMultipleViewModel;
 import com.example.energy.viewmodel.dto.RequestBodyPersonViewModel;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 
@@ -91,6 +93,25 @@ public class MeterService {
             Meter meter = new Meter();
             meter.setCode(code);
             meter.setApartment(apartment);
+            meter.setInstallationDate(LocalDate.parse(viewModel.getDate()));
+            meterRepository.save(meter);
+        });
+
+        return true;
+    }
+
+    public Boolean createMetersDeactivateOld(RequestBodyPersonMultipleViewModel viewModel) {
+
+        Apartment apartment = apartmentRepository.findById(Long.valueOf(viewModel.getApartmentId())).orElse(null);
+        apartment.getMeters()
+                .forEach(meter -> meter.setActive(false));
+        meterRepository.saveAll(apartment.getMeters());
+
+        viewModel.getCode().forEach(code -> {
+            Meter meter = new Meter();
+            meter.setCode(code);
+            meter.setApartment(apartment);
+            meter.setInstallationDate(LocalDate.parse(viewModel.getDate()));
             meterRepository.save(meter);
         });
 
