@@ -3,12 +3,15 @@ package com.example.energy.controller.importer;
 import com.example.energy.repository.CityRepository;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.importer.ImporterService;
+import com.example.energy.viewmodel.dto.DTO;
 import com.example.energy.viewmodel.dto.MissingMetersDataViewModel;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/import")
@@ -107,22 +110,6 @@ public class ImporterController {
     }
 
 
-    @PostMapping
-    @RequestMapping("/importXML")
-    public EnergyResponse importXML(@RequestParam("file") MultipartFile file) {
-        try {
-            if (file == null || file.isEmpty()) {
-                return EnergyResponse.error(500, "No file added");
-            }
-            importerService.importXML(file);
-            return EnergyResponse.success("File uploaded successfully", null);
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return EnergyResponse.error(500, "error");
-
-        }
-    }
 
     @PostMapping(value = "/print-fabnr", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public EnergyResponse<List<String>> printFabnrFromXml(
@@ -133,22 +120,33 @@ public class ImporterController {
         return EnergyResponse.success("Success",fabnrs);
     }
 
-    @PostMapping
-    @RequestMapping("/importTechem")
-    public EnergyResponse importTechem(@RequestParam("file") MultipartFile file) {
+    @PostMapping(value = "/importTechem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<EnergyResponse<DTO.ImportResult>> importTechem(@RequestParam("file") MultipartFile file) {
         try {
             if (file == null || file.isEmpty()) {
-                return EnergyResponse.error(500, "No file added");
+                return ResponseEntity.badRequest().body(EnergyResponse.error(400, "No file added"));
             }
-            importerService.importDataForMonth(file);
-            return EnergyResponse.success("File uploaded successfully", null);
-
+            DTO.ImportResult result = importerService.importDataForMonth(file);
+            return ResponseEntity.ok(EnergyResponse.success("Techem import završen.", result));
         } catch (Exception ex) {
-            ex.printStackTrace();
-            return EnergyResponse.error(500, "error");
-
+            return ResponseEntity.status(500).body(EnergyResponse.error(500, ex.getMessage()));
         }
     }
+
+    @PostMapping(value = "/importXML", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<EnergyResponse<DTO.ImportResult>> importXML(@RequestParam("file") MultipartFile file) {
+        try {
+            if (file == null || file.isEmpty()) {
+                return ResponseEntity.badRequest().body(EnergyResponse.error(400, "No file added"));
+            }
+            DTO.ImportResult result = importerService.importXMLFast(file);
+            return ResponseEntity.ok(EnergyResponse.success("XML import završen.", result));
+        } catch (Exception ex) {
+            return ResponseEntity.status(500).body(EnergyResponse.error(500, ex.getMessage()));
+        }
+    }
+
+
 
 
 }

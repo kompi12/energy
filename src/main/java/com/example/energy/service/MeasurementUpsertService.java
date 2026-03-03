@@ -83,6 +83,31 @@ public class MeasurementUpsertService {
         return  measurementRepository.save(newMeasurement);
     }
 
+    public boolean createMeasurementFast(
+            String isoDateTime,
+            String valueXml,
+            String pNumberXml,
+            java.util.function.Function<String, Meter> meterResolver // cache iz importera
+    ) {
+        String date = t(isoDateTime);
+        String value = t(valueXml);
+        String code = t(pNumberXml);
+
+        if (date == null || value == null || code == null) return false;
+
+        Meter meter = meterResolver.apply(code);
+        if (meter == null) return false;
+
+        LocalDate dateLocal = LocalDateTime
+                .parse(date, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                .toLocalDate();
+
+        double v = Double.parseDouble(value);
+
+        int inserted = measurementRepository.insertIgnore(meter.getId(), dateLocal, v);
+        return inserted == 1;
+    }
+
     private static String t(String s) {
         if (s == null) return null;
         String x = s.trim();

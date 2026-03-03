@@ -1,9 +1,6 @@
 package com.example.energy.service.export;
 
-import com.example.energy.model.Building;
-import com.example.energy.model.BuildingAddress;
-import com.example.energy.model.Meter;
-import com.example.energy.model.MonthValue;
+import com.example.energy.model.*;
 import com.example.energy.repository.*;
 import com.example.energy.service.ApartmentRowMapper;
 import com.example.energy.service.ApartmentService;
@@ -159,6 +156,79 @@ public class ExportExcelService {
         return zipBos.toByteArray();
     }
 
+
+    public <T> byte[] exportDataDynamicVinkovicGlobal(
+            ExportDataViewModel dataViewModel,
+            ApartmentRowMapper<T> mapper,
+            BiFunction<List<T>, List<YearMonth>, byte[]> writer
+    ) throws IOException {
+
+        List<T> allRows = new ArrayList<>();
+
+        List<YearMonth> months = getMonthsFromOctober(
+                dataViewModel.getYear(),
+                dataViewModel.getMonth()
+        );
+
+        // 1) Skupi SVE aktivne apartmane iz SVIH zgrada
+        List<Apartment> allApartments = new ArrayList<>();
+
+        for (String buildingId : dataViewModel.getLists()) {
+
+            Optional<Building> buildingOpt =
+                    buildingRepository.findByCodeIgnoreCase(buildingId);
+
+            if (buildingOpt.isEmpty()) {
+                logger.warn("Building not found for id: {}", buildingId);
+                continue;
+            }
+
+            Building building = buildingOpt.get();
+
+            building.getApartments().stream()
+                    .filter(a -> Boolean.TRUE.equals(a.getActive()))
+                    .forEach(allApartments::add);
+        }
+
+        // 2) GLOBALNO sortiranje po sequence (nulls last)
+        allApartments.sort(
+                Comparator.comparing(
+                        Apartment::getSequence,
+                        Comparator.nullsLast(Integer::compareTo)
+                )
+        );
+
+        // 3) Mapiranje u redove po globalno sortiranom poretku
+        for (Apartment a : allApartments) {
+            try {
+                mapper.map(a, months).forEach(allRows::add);
+            } catch (IOException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        // 4) Jedan jedini file (xlsx bytes)
+        byte[] fileBytes = writer.apply(allRows, months);
+
+        // 5) Isti naming + zip kao "obični"
+        String fileName = "VINKOVCI_" + dataViewModel.getDate() + ".xlsx";
+
+        ByteArrayOutputStream zipBos = new ByteArrayOutputStream();
+        try (ZipOutputStream zipOut = new ZipOutputStream(zipBos)) {
+            zipOut.putNextEntry(new ZipEntry(fileName));
+            zipOut.write(fileBytes);
+            zipOut.closeEntry();
+        }
+
+        // 6) Isti store kao "obični" (spremaš xlsx bytes, ne zip)
+        helperService.storeCsvLocally(fileName, fileBytes);
+
+        // 7) Vrati zip bytes (kao obični)
+        return zipBos.toByteArray();
+    }
+
     @SneakyThrows
     public byte[] exportByMeters(ExportDataViewModel vm) throws IOException {
 
@@ -195,7 +265,7 @@ public class ExportExcelService {
     @SneakyThrows
     public byte[] exportByApartments(ExportDataViewModel vm) throws IOException {
 
-        return exportDataDynamic(
+        return exportDataDynamicVinkovic(
                 vm,
                 (apartment, months) -> {
 

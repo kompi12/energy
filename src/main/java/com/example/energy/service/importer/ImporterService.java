@@ -8,6 +8,7 @@ import com.example.energy.service.ApartmentUpsertService;
 import com.example.energy.service.MeasurementService;
 import com.example.energy.service.MeasurementUpsertService;
 import com.example.energy.service.MeterUpsertService;
+import com.example.energy.viewmodel.dto.DTO;
 import com.example.energy.viewmodel.dto.MissingMetersDataViewModel;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -89,14 +90,14 @@ public class ImporterService {
      * Creates a Measurement if meter exists; logs missing meters.
      */
     @Transactional
-    public void importDataForMonth(MultipartFile file) {
+    public DTO.ImportResult importDataForMonth(MultipartFile file) {
         try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
             Sheet sheet = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
 
             int inserted = 0, skipped = 0, missingMeter = 0, duplicates = 0;
+            List<String> warnings = new ArrayList<>();
 
-            // 1️⃣ Collect all meter codes from the Excel
             Set<String> meterCodes = new HashSet<>();
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row r = sheet.getRow(i);
@@ -104,12 +105,11 @@ public class ImporterService {
                 String meterCode = fmt.formatCellValue(r.getCell(6)).trim();
                 if (!meterCode.isEmpty()) meterCodes.add(meterCode);
             }
-           // List<Meter> activeMeters =meterRepository.findByCodeInAndActiveTrueAndApartmentActiveTrue(meterCodes,true,true);
+
             List<Meter> activeMeters = meterRepository.findByCodeInAndActiveTrue(meterCodes);
             Map<String, Meter> meterMap = activeMeters.stream()
                     .collect(Collectors.toMap(Meter::getCode, m -> m));
 
-            // 3️⃣ Preload existing measurements for these meters (current month or all)
             List<Meter> meters = new ArrayList<>(meterMap.values());
             Map<String, Set<LocalDate>> existingByMeter = new HashMap<>();
             measurementRepository.findAllByMeterIn(meters).forEach(m -> {
@@ -119,9 +119,8 @@ public class ImporterService {
             });
 
             List<Measurement> buffer = new ArrayList<>();
-            final int BATCH_SIZE = 500;
+            final int BATCH_SIZE = 1000;
 
-            // 4️⃣ Iterate rows
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row r = sheet.getRow(i);
                 if (r == null) continue;
@@ -133,7 +132,7 @@ public class ImporterService {
                 Meter meter = meterMap.get(meterCode);
                 if (meter == null) {
                     String person = fmt.formatCellValue(r.getCell(2)).trim();
-                    log.info("Missing or inactive meter for row {}: code='{}', person='{}'", i, meterCode, person);
+                    warnings.add("Missing/inactive meter row " + i + ": code=" + meterCode + ", person=" + person);
                     missingMeter++;
                     continue;
                 }
@@ -141,7 +140,6 @@ public class ImporterService {
                 LocalDate date = parseLocalDate(r.getCell(7), fmt);
                 if (date == null) { skipped++; continue; }
 
-                // 🧠 Check if measurement already exists
                 Set<LocalDate> existingDates = existingByMeter.computeIfAbsent(meterCode, k -> new HashSet<>());
                 if (existingDates.contains(date)) {
                     duplicates++;
@@ -160,8 +158,7 @@ public class ImporterService {
 
                 buffer.add(m);
                 inserted++;
-                existingDates.add(date); // ✅ now safe
-
+                existingDates.add(date);
 
                 if (buffer.size() >= BATCH_SIZE) {
                     measurementRepository.saveAll(buffer);
@@ -176,9 +173,19 @@ public class ImporterService {
             log.info("Monthly import done: inserted={}, duplicates={}, missingMeter={}, skipped={}",
                     inserted, duplicates, missingMeter, skipped);
 
+            return new DTO.ImportResult(
+                    "TECHEM",
+                    0,
+                    inserted,
+                    duplicates,
+                    missingMeter,
+                    skipped,
+                    warnings
+            );
+
         } catch (Exception e) {
             log.error("Monthly import failed: {}", e.getMessage(), e);
-            throw new RuntimeException("Monthly import failed", e);
+            throw new RuntimeException("Monthly import failed: " + e.getMessage(), e);
         }
     }
 
@@ -601,113 +608,247 @@ public class ImporterService {
 
 
     @Transactional
-    public void importXML(MultipartFile file) {
-            int createdMeasurements = 0;
+    public DTO.ImportResult importXML(MultipartFile file) {
+        int createdMeasurements = 0;
+        List<String> warnings = new ArrayList<>();
 
-            try (InputStream is = file.getInputStream()) {
+        try (InputStream is = file.getInputStream()) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
 
-                DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-                DocumentBuilder builder = factory.newDocumentBuilder();
-                Document doc = builder.parse(is);
-                doc.getDocumentElement().normalize();
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
 
-                NodeList measuredevList = doc.getElementsByTagName("measuredev");
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+                Element measuredev = (Element) measuredevList.item(i);
 
-                for (int i = 0; i < measuredevList.getLength(); i++) {
-                    Element measuredev = (Element) measuredevList.item(i);
+                String fabnr = safeGetText(measuredev, "fabnr");
+                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
 
-                    String fabnr = safeGetText(measuredev, "fabnr");
-                    Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
-                    String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+                // datetime
+                String datetimeCandidate = null;
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
 
-                    // --------------------------------------------------------------
-                    // Determine datetime: FIRST look for datapoint dimension=datetime
-                    // --------------------------------------------------------------
-                    String datetimeCandidate = null;
-                    NodeList datapoints = measuredev.getElementsByTagName("datapoint");
-
-                    for (int j = 0; j < datapoints.getLength(); j++) {
-                        Element dp = (Element) datapoints.item(j);
-                        String dim = safeGetText(dp, "dimension");
-
-                        if ("datetime".equalsIgnoreCase(dim)) {
-                            datetimeCandidate = safeGetText(dp, "value");
-                            break;
-                        }
-                    }
-
-                    if (datetimeCandidate == null) {
-                        String xmlDate = safeGetText(measuredev, "date");
-                        String xmlTime = safeGetText(measuredev, "time");
-
-                        if (!xmlDate.isEmpty()) {
-                            datetimeCandidate = xmlTime.isEmpty() ? xmlDate : xmlDate + " " + xmlTime;
-                        }
-                    }
-
-                    String isoDatetime = parseToIso(datetimeCandidate);
-
-                    // --------------------------------------------------------------
-                    // FIND FIRST DATAPOINT WITH dimension == "H.C.A."
-                    // --------------------------------------------------------------
-                    Element hcaDatapoint = null;
-
-                    for (int j = 0; j < datapoints.getLength(); j++) {
-                        Element dp = (Element) datapoints.item(j);
-
-                        String dim = safeGetText(dp, "dimension");
-                        if (dim == null) {
-                            continue; // invalid → skip
-                        }
-
-                        if ("H.C.A.".equalsIgnoreCase(dim.trim())) {
-                            hcaDatapoint = dp;
-                            break; // first match only
-                        }
-
-                        // Any other dimension → skip and continue searching
-                    }
-
-                    // No H.C.A. datapoint found → skip whole measuredev
-                    if (hcaDatapoint == null) {
-                        continue;
-                    }
-
-                    // --------------------------------------------------------------
-                    // Extract value from the FIRST H.C.A. datapoint
-                    // --------------------------------------------------------------
-                    String value = safeGetText(hcaDatapoint, "value");
-
-                    if (value == null || value.trim().isEmpty() || value.contains("--.--.--")) {
-                        continue; // invalid HCA datapoint
-                    }
-
-                    // --------------------------------------------------------------
-                    // Determine device ID (identnr > fabnr)
-                    // --------------------------------------------------------------
-                    String deviceId = identnr.isEmpty() ? fabnr : identnr;
-
-                    // --------------------------------------------------------------
-                    // Create or update measurement
-                    // --------------------------------------------------------------
-                    Measurement measurement = measurementUpsertService.createMeasurement(
-                            isoDatetime,
-                            value,
-                            deviceId
-                    );
-
-                    if (measurement != null) {
-                        createdMeasurements++;
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if ("datetime".equalsIgnoreCase(dim)) {
+                        datetimeCandidate = safeGetText(dp, "value");
+                        break;
                     }
                 }
 
-                log.info("Imported: createdMeasurements={}", createdMeasurements);
+                if (datetimeCandidate == null) {
+                    String xmlDate = safeGetText(measuredev, "date");
+                    String xmlTime = safeGetText(measuredev, "time");
+                    if (!xmlDate.isEmpty()) {
+                        datetimeCandidate = xmlTime.isEmpty() ? xmlDate : xmlDate + " " + xmlTime;
+                    }
+                }
 
-            } catch (Exception e) {
-                log.error("Import failed: {}", e.getMessage(), e);
-                throw new RuntimeException("Import failed", e);
+                String isoDatetime = parseToIso(datetimeCandidate);
+
+                // H.C.A. datapoint
+                Element hcaDatapoint = null;
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if (dim == null) continue;
+                    if ("H.C.A.".equalsIgnoreCase(dim.trim())) {
+                        hcaDatapoint = dp;
+                        break;
+                    }
+                }
+                if (hcaDatapoint == null) continue;
+
+                String value = safeGetText(hcaDatapoint, "value");
+                if (value == null || value.trim().isEmpty() || value.contains("--.--.--")) continue;
+
+                String deviceId = identnr.isEmpty() ? fabnr : identnr;
+
+                Measurement measurement = measurementUpsertService.createMeasurement(
+                        isoDatetime,
+                        value,
+                        deviceId
+                );
+
+                if (measurement != null) createdMeasurements++;
             }
+
+            log.info("Imported XML: createdMeasurements={}", createdMeasurements);
+
+            return new DTO.ImportResult(
+                    "XML",
+                    createdMeasurements,
+                    0, 0, 0, 0,
+                    warnings
+            );
+
+        } catch (Exception e) {
+            log.error("Import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Import failed: " + e.getMessage(), e);
         }
+    }
+
+    @Transactional
+    public DTO.ImportResult importXMLFast(MultipartFile file) {
+        int createdMeasurements = 0;
+        int missingMeters = 0;
+        int skippedNoHca = 0;
+        int skippedBadValue = 0;
+        int skippedBadDate = 0;
+        int skippedDuplicate = 0;
+        final int MISSING_LOG_LIMIT = 500; // da ne ubije log ako ih je 50k
+        java.util.Set<String> missingDeviceIds = new java.util.LinkedHashSet<>();
+
+        List<String> warnings = new ArrayList<>();
+
+        // cache: deviceId -> Meter (null znači: već smo probali i ne postoji)
+        Map<String, Meter> meterCache = new HashMap<>();
+
+        try (InputStream is = file.getInputStream()) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+                Element measuredev = (Element) measuredevList.item(i);
+
+                String fabnr = safeGetText(measuredev, "fabnr");
+
+                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+
+                String deviceId = (identnr != null && !identnr.trim().isEmpty())
+                        ? identnr.trim()
+                        : (fabnr == null ? "" : fabnr.trim());
+
+                if (deviceId.isEmpty()) {
+                    missingMeters++;
+                    continue;
+                }
+
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                String datetimeCandidate = null;
+                Element hcaDatapoint = null;
+
+                // 1 pass kroz datapoints: tražimo datetime i H.C.A.
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if (dim == null) continue;
+                    dim = dim.trim();
+
+                    if (datetimeCandidate == null && "datetime".equalsIgnoreCase(dim)) {
+                        datetimeCandidate = safeGetText(dp, "value");
+                    } else if (hcaDatapoint == null && "H.C.A.".equalsIgnoreCase(dim)) {
+                        hcaDatapoint = dp;
+                    }
+
+                    if (datetimeCandidate != null && hcaDatapoint != null) break;
+                }
+
+                if (datetimeCandidate == null) {
+                    String xmlDate = safeGetText(measuredev, "date");
+                    String xmlTime = safeGetText(measuredev, "time");
+                    if (xmlDate != null && !xmlDate.trim().isEmpty()) {
+                        datetimeCandidate = (xmlTime == null || xmlTime.trim().isEmpty())
+                                ? xmlDate
+                                : xmlDate + " " + xmlTime;
+                    }
+                }
+
+                String isoDatetime;
+                try {
+                    isoDatetime = parseToIso(datetimeCandidate);
+                } catch (Exception ex) {
+                    skippedBadDate++;
+                    continue;
+                }
+
+                if (hcaDatapoint == null) {
+                    skippedNoHca++;
+                    continue;
+                }
+
+                String value = safeGetText(hcaDatapoint, "value");
+                if (value == null) {
+                    skippedBadValue++;
+                    continue;
+                }
+                value = value.trim();
+                if (value.isEmpty() || value.contains("--.--.--")) {
+                    skippedBadValue++;
+                    continue;
+                }
+
+                // resolver s cacheom (1 DB hit po novom deviceId-u)
+                java.util.function.Function<String, Meter> meterResolver = (code) ->
+                        meterCache.computeIfAbsent(code, c ->
+                                meterRepository.findByCodeAndActiveTrue(c).orElse(null)
+                        );
+
+                Meter meter = meterResolver.apply(deviceId);
+                if (meter == null) {
+                    missingMeters++;
+
+                    // skupljaj SAMO one koji fale (limitirano)
+                    if (missingDeviceIds.size() < MISSING_LOG_LIMIT) {
+                        missingDeviceIds.add(deviceId);
+                    }
+
+                    continue;
+                }
+
+                boolean created = measurementUpsertService.createMeasurementFast(
+                        isoDatetime,
+                        value,
+                        deviceId,
+                        meterResolver
+                );
+
+                if (created) {
+                    createdMeasurements++;
+                } else {
+                    // nije created => ili duplikat ili nešto invalid (ali mi gore već filtriramo),
+                    // realno ovdje je najčešće duplikat
+                    skippedDuplicate++;
+                }
+            }
+            if (missingMeters > 0) {
+                if (!missingDeviceIds.isEmpty()) {
+                    log.warn("Missing meters (not found or inactive). Count={}, showing up to {}: {}",
+                            missingMeters, MISSING_LOG_LIMIT, String.join(", ", missingDeviceIds));
+                    if (missingDeviceIds.size() == MISSING_LOG_LIMIT) {
+                        log.warn("Missing meters list truncated at {} items. Increase MISSING_LOG_LIMIT if needed.", MISSING_LOG_LIMIT);
+                    }
+                } else {
+                    log.warn("Missing meters (not found or inactive). Count={}", missingMeters);
+                }
+            }
+            log.info(
+                    "Imported XML: created={}, missingMeters={}, noHca={}, badValue={}, badDate={}, duplicates={}",
+                    createdMeasurements, missingMeters, skippedNoHca, skippedBadValue, skippedBadDate, skippedDuplicate
+            );
+
+            return new DTO.ImportResult(
+                    "XML",
+                    createdMeasurements,
+                    0, 0, 0, 0,
+                    warnings
+            );
+
+        } catch (Exception e) {
+            log.error("Import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Import failed: " + e.getMessage(), e);
+        }
+    }
 
 
 
@@ -846,8 +987,7 @@ public class ImporterService {
 
                 String dateValue = null;
                 int hcaSum = 0;
-                boolean hasHca = false;
-                int hcaTotal = 0;
+
 
                 for (int j = 0; j < datapoints.getLength(); j++) {
                     Element dp = (Element) datapoints.item(j);
@@ -855,36 +995,20 @@ public class ImporterService {
                     String dimension = safeGetText(dp, "dimension");
                     String value = safeGetText(dp, "value");
 
-                    // ---- DATE
                     if ("date".equalsIgnoreCase(dimension)) {
                         dateValue = value;
                     }
 
-                    // ---- H.C.A. SUM
                     if ("H.C.A.".equalsIgnoreCase(dimension)) {
-                        if (value != null && !value.isEmpty() && !value.contains("--")) {
-                            try {
-                                hcaSum += Integer.parseInt(value);
-                                hasHca = true;
-                            } catch (NumberFormatException ignored) {
-                            }
-                        }
-                        hcaTotal++;
-                        if (hcaTotal >= 4) {
-                            break;
-                        }
+                        hcaSum = Integer.parseInt(value);
+                     break;
                     }
                 }
 
-                // ---- mora biti datum 31.12.25
-                if (!"31.12.25".equals(dateValue) && !"31.12.2025".equals(dateValue)) {
-                    continue;
-                }
-
-                // ---- mora postojati barem jedan H.C.A.
-                if (!hasHca) {
-                    continue;
-                }
+//                // ---- mora biti datum 31.12.25
+//                if (!"31.12.25".equals(dateValue) && !"31.12.2025".equals(dateValue)) {
+//                    continue;
+//                }
 
                 // ---- check for duplicates
                 List<Meter> meters = meterRepository.findAllByCodeAndActive(fabnr,true);
@@ -907,7 +1031,7 @@ public class ImporterService {
                         .orElse(null);
 
                 if (measurement != null) {
-                    measurement.setValue((double) hcaSum);
+                    measurement.setValue((double) 6);
                     measurementRepository.save(measurement);
                 }
 
@@ -916,6 +1040,90 @@ public class ImporterService {
                         "<fabnr>" + fabnr + "</fabnr> | " +
                                 "date=" + dateValue + " | " +
                                 "HCA_SUM=" + hcaSum
+                );
+            }
+
+        } catch (Exception e) {
+            log.error("XML processing failed", e);
+            throw new RuntimeException("XML processing failed", e);
+        }
+
+        return result;
+    }
+
+    @Transactional
+    public List<String> extractFabnrForDateNew(MultipartFile file) {
+
+        List<String> result = new ArrayList<>();
+
+        try (InputStream is = file.getInputStream()) {
+
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+
+                Element measuredev = (Element) measuredevList.item(i);
+
+                String fabnr = safeGetText(measuredev, "fabnr");
+                if (fabnr.isEmpty()) continue;
+
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                String dateValue = null;
+
+                Integer hcaValue = null;   // <-- OVERWRITE vrijednost iz filea
+                boolean hasHca = false;
+                int hcaSeen = 0;
+
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+
+                    String dimension = safeGetText(dp, "dimension");
+                    String value = safeGetText(dp, "value");
+
+                    // DATE
+                    if ("date".equalsIgnoreCase(dimension)) {
+                        dateValue = value;
+                        continue;
+                    }
+
+                    // H.C.A. (uzmi prvi valjani unutar prva 4)
+                    if ("H.C.A.".equalsIgnoreCase(dimension)) {
+                        hcaSeen++;
+
+                        if (value != null && !value.isEmpty() && !value.contains("--")) {
+                            try {
+                                hcaValue = Integer.parseInt(value); // <-- ne zbraja, samo postavi
+                                hasHca = true;
+                                break; // <-- čim nađeš prvi valjani, prekini
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+
+                        if (hcaSeen >= 4) break; // kao i prije: limit na prva 4 HCA datapointa
+                    }
+                }
+
+                // mora biti datum 31.12.25
+                if (!"31.12.25".equals(dateValue) && !"31.12.2025".equals(dateValue)) {
+                    continue;
+                }
+
+                // mora postojati barem jedan H.C.A.
+                if (!hasHca) {
+                    continue;
+                }
+
+                // samo rezultat (bez DB upisa)
+                result.add(
+                        "<fabnr>" + fabnr + "</fabnr> | " +
+                                "date=" + dateValue + " | " +
+                                "HCA=" + hcaValue
                 );
             }
 

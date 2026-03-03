@@ -347,7 +347,6 @@ public class ExportService {
                                 address
                         );
                     })
-                    .sorted(Comparator.comparing(MeasurementRow::getHepMbr))
                     .toList();
 
             allRows.addAll(rows);
