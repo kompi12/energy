@@ -1,0 +1,2 @@
+ALTER TABLE apartment
+    ADD COLUMN IF NOT EXISTS sequence INTEGER NULL;

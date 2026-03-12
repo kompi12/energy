@@ -1,54 +1,151 @@
 package com.example.energy.controller.importer;
 
-import com.example.energy.repository.MeterRepository;
+import com.example.energy.repository.CityRepository;
 import com.example.energy.response.EnergyResponse;
 import com.example.energy.service.importer.ImporterService;
-import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import com.example.energy.viewmodel.dto.DTO;
+import com.example.energy.viewmodel.dto.MissingMetersDataViewModel;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/import")
 public class ImporterController {
 
-    public ImporterController(ImporterService importerService) {
+
+    public ImporterController(ImporterService importerService, CityRepository cityRepository) {
         this.importerService = importerService;
     }
 
 
-    private  final ImporterService importerService;
+    private final ImporterService importerService;
 
     @PostMapping
     @RequestMapping("/importExcelData")
     public EnergyResponse importData(@RequestParam("file") MultipartFile file) {
         try {
-            importerService.importInitalData(file);
+            importerService.importInitialData(file);
             return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
 
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+            return EnergyResponse.error(500, "error");
 
         }
     }
 
 
     @PostMapping
-    @RequestMapping("/importDataForMonth")
-    public EnergyResponse importDataForMonth(@RequestParam("file") MultipartFile file) {
+    @RequestMapping("/checkBuildingsTechem")
+    public EnergyResponse<List<String>> checkBuildingsTechem(@RequestParam("file") MultipartFile file) {
         try {
-            importerService.importDataForMonth(file);
-            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+           List<String> missingBuildings =  importerService.checkBuildingsTechem(file);
+            return EnergyResponse.success("File uploaded successfully", missingBuildings);
 
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+            return EnergyResponse.error(500, "error");
 
         }
     }
+
+
+    @PostMapping
+    @RequestMapping("/importSequence")
+    public EnergyResponse importSequence(@RequestParam("file") MultipartFile file) {
+        try {
+            importerService.importSequence(file);
+            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+
+    @PostMapping("/importMetersMissing")
+    public EnergyResponse exportBuildings(@RequestBody MissingMetersDataViewModel exportData) {
+        try {
+
+            importerService.importMissingMeters(exportData);
+            return EnergyResponse.success(EnergyResponse.success("Meters added successfully", null));
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+    @PostMapping("/importMetersMissingSjenjak")
+    public EnergyResponse importBuildingSjenjak(@RequestParam("file") MultipartFile file) {
+        try {
+
+            importerService.importNewMeters(file);
+            return EnergyResponse.success(EnergyResponse.success("Meters added successfully", null));
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+    @PostMapping("/importMetersMissinJD7")
+    public EnergyResponse importBuildingSjenjakJD7(@RequestParam("file") MultipartFile file) {
+        try {
+
+            importerService.importNewMetersJD7(file);
+            return EnergyResponse.success("Meters added successfully", null);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            return EnergyResponse.error(500, "error");
+
+        }
+    }
+
+
+
+    @PostMapping(value = "/print-fabnr", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public EnergyResponse<List<String>> printFabnrFromXml(
+            @RequestParam("file") MultipartFile file) {
+
+        List<String> fabnrs = importerService.extractFabnrForDate(file);
+
+        return EnergyResponse.success("Success",fabnrs);
+    }
+
+    @PostMapping(value = "/importTechem", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<EnergyResponse<DTO.ImportResult>> importTechem(@RequestParam("file") MultipartFile file) {
+        try {
+            if (file == null || file.isEmpty()) {
+                return ResponseEntity.badRequest().body(EnergyResponse.error(400, "No file added"));
+            }
+            DTO.ImportResult result = importerService.importDataForMonth(file);
+            return ResponseEntity.ok(EnergyResponse.success("Techem import završen.", result));
+        } catch (Exception ex) {
+            return ResponseEntity.status(500).body(EnergyResponse.error(500, ex.getMessage()));
+        }
+    }
+
+    @PostMapping(value = "/importXML", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<EnergyResponse<DTO.ImportResult>> importXML(@RequestParam("file") MultipartFile file) {
+        try {
+            if (file == null || file.isEmpty()) {
+                return ResponseEntity.badRequest().body(EnergyResponse.error(400, "No file added"));
+            }
+            DTO.ImportResult result = importerService.importXMLFast(file);
+            return ResponseEntity.ok(EnergyResponse.success("XML import završen.", result));
+        } catch (Exception ex) {
+            return ResponseEntity.status(500).body(EnergyResponse.error(500, ex.getMessage()));
+        }
+    }
+
 
 
 

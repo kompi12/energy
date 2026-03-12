@@ -1,44 +1,67 @@
 package com.example.energy.model;
 
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.*;
 
 import java.util.List;
 
 @Entity
-@Getter
-@Setter
+@Table(name = "apartment",
+        indexes = {
+                @Index(name = "ix_apartment_building", columnList = "building_id"),
+                @Index(name = "ix_apartment_person", columnList = "person_id")
+        })
+@Getter @Setter
+@ToString(exclude = {"building", "person", "meters"})
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Apartment {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "apartment_seq")
+    @SequenceGenerator(name = "apartment_seq", sequenceName = "apartment_seq", allocationSize = 50)
     @Column(name = "apartment_id")
     private Long id;
 
-    @Column(name = "apartment_number", length = 20)
+    @Column(name = "apartment_number", length = 1000)
     private String apartmentNumber;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "building_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "building_id", nullable = false,
+            foreignKey = @ForeignKey(name = "fk_apartment_building"))
     private Building building;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "person_id")
+    @JoinColumn(name = "person_id", foreignKey = @ForeignKey(name = "fk_apartment_person"))
     private Person person;
 
-
-    @Column(nullable = false, length = 100)
+    @Column(name = "mbr",nullable = true, length = 100)
     private String mbr;
 
-    @Column(length = 100)
+    @Column(name = "hep_mbr", length = 100)
     private String hepMBR;
+
+    @Column(name = "hep_mbr_water", length = 100)
+    private String hepMBRWater;
+
+    @Column(name = "decimalno")
+    private Double decimalno;
+
+    @Column(name = "mjerno_mjesto", length = 100)
+    private String mjernoMjesto;
 
     @Column
     private Integer priority;
 
+    @Column(name = "sequence")
+    private Integer sequence;
+
+    @Column(name = "active")
+    private Boolean active = true;
+
     @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Meter> meters;
 
-
+    @OneToMany(mappedBy = "apartment", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<WaterMeter> waterMeters;
 }

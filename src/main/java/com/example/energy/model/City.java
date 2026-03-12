@@ -1,21 +1,26 @@
 package com.example.energy.model;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import lombok.Getter;
-import lombok.Setter;
+import jakarta.persistence.*;
+import lombok.*;
 
-@Getter
-@Setter
 @Entity
+@Table(name = "city",
+        uniqueConstraints = @UniqueConstraint(name = "uk_city_name_country", columnNames = {"name", "country"}),
+        indexes = @Index(name = "ix_city_name", columnList = "name"))
+@Getter @Setter @ToString
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class City {
 
-    public String name;
-
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "city_seq")
+    @SequenceGenerator(name = "city_seq", sequenceName = "city_seq", allocationSize = 50)
+    @Column(name = "city_id")
     private Long id;
 
+    @Column(name = "name", nullable = false, length = 120)
+    private String name;
+
+    @Column(name = "country", nullable = false, length = 2)
+    private String country = "HR";
 }

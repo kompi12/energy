@@ -20,6 +20,10 @@ public class ApartmentViewModel {
 
     private PersonViewModel person;
 
+    private String personFirstName;
+
+    private Long apartmentId;
+
     private String mbr;
 
     private String hepMBR;
@@ -28,14 +32,16 @@ public class ApartmentViewModel {
 
 
 
+
+
     public static ApartmentViewModel createViewModel(Apartment apartment){
-        ApartmentViewModel apartmentViewModel = new ApartmentViewModel();
-        apartmentViewModel.setApartmentNumber(apartment.getApartmentNumber());
-        apartmentViewModel.setMbr(apartment.getMbr());
-        apartmentViewModel.setHepMBR(apartment.getHepMBR());
-        apartmentViewModel.setBuilding(BuildingViewModel.createViewModel(apartment.getBuilding()));
-        apartmentViewModel.setMeters(apartment.getMeters().stream().map(MeterViewModel::createViewModel).collect(Collectors.toList()));
-        return apartmentViewModel;
+        ApartmentViewModel vm = new ApartmentViewModel();
+        vm.setApartmentNumber(apartment.getApartmentNumber());
+        vm.setApartmentId(apartment.getId());
+        vm.setMbr(apartment.getMbr());
+        vm.setHepMBR(apartment.getHepMBR());
+        vm.setPersonFirstName(apartment.getPerson().getFirstName());
+        return vm;
     }
 
 

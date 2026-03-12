@@ -1,328 +1,1139 @@
 package com.example.energy.service.importer;
 
-
+import com.example.energy.enums.WaterMeterType;
 import com.example.energy.model.*;
-import com.example.energy.repository.*;
-import com.example.energy.service.ApartmentService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import com.example.energy.repository.*;
+import com.example.energy.service.ApartmentUpsertService;
+import com.example.energy.service.MeasurementService;
+import com.example.energy.service.MeasurementUpsertService;
+import com.example.energy.service.MeterUpsertService;
+import com.example.energy.viewmodel.dto.DTO;
+import com.example.energy.viewmodel.dto.MissingMetersDataViewModel;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
 import java.io.InputStream;
-import java.text.DateFormat;
-import java.util.Date;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.*;
+import java.util.stream.Collectors;
 
-
+/**
+ * Importer for initial master data and monthly measurements from Excel.
+ *
+ * Expected columns (by your current sheets):
+ *   Sheet0 / Sheet3 (initial users+meters):
+ *     [1]=sifraZgrade(buildingCode) [2]=city [3]=address [4]=mbr [5]=personName
+ *     [6]=meterCode [7]=power [8]=value (optional)
+ *
+ *   Sheet2 / Sheet4 (audit of missing users):
+ *     sheet2: [5]=personName [6]=mbr [7]=hep_mbr
+ *     sheet4: [5]=personName [4]=mbr [7]=hep_mbr
+ *
+ *   Monthly measurements (importDataForMonth):
+ *     [0]=sifraZgrade [1]=address [2]=personName [5]=meterCode
+ *     [7]=date (ISO yyyy-MM-dd or Excel date) [8]=value (int)
+ */
 @Service
 public class ImporterService {
 
-    private static final Logger logger = LoggerFactory.getLogger(ImporterService.class);
+    private static final Logger log = LoggerFactory.getLogger(ImporterService.class);
 
-    public ImporterService(
-            MeterRepository meterRepository,
-            ApartmentService apartmentService,
-            ApartmentRepository apartmentRepository,
-            BuildingRepository buildingRepository,
-            MeasurementRepository measurementRepository,
-            CityRepository cityRepository,
-            PersonRepository personRepository
-    ) {
-        this.meterRepository = meterRepository;
-        this.apartmentService = apartmentService;
-        this.apartmentRepository = apartmentRepository;
-        this.buildingRepository = buildingRepository;
-        this.measurementRepository = measurementRepository;
-        this.cityRepository = cityRepository;
-        this.personRepository = personRepository;
-    }
+    private final MeterUpsertService meterUpsertService;
+    private final ApartmentUpsertService apartmentUpsertService;
 
 
     private final MeterRepository meterRepository;
-    private final ApartmentService apartmentService;
-    private final ApartmentRepository apartmentRepository;
-    private final BuildingRepository buildingRepository;
+    private final WaterMeterRepository waterMeterRepository;
     private final MeasurementRepository measurementRepository;
-    private final CityRepository cityRepository;
-    private final PersonRepository personRepository;
+    private final ApartmentRepository apartmentRepository;
+    private final MeasurementService measurementService;
+    private final MeasurementUpsertService measurementUpsertService;
+    private final BuildingRepository buildingRepository;
 
+    public ImporterService(
+            MeterUpsertService meterUpsertService,
+            ApartmentUpsertService apartmentUpsertService,
+            MeterRepository meterRepository,
+            WaterMeterRepository waterMeterRepository,
+            MeasurementRepository measurementRepository,
+            ApartmentRepository apartmentRepository,
+            MeasurementService measurementService,
+            MeasurementUpsertService measurementUpsertService,
 
-    public void importData(MultipartFile file) {
-        try (InputStream inputStream = file.getInputStream();
-             Workbook workbook = new XSSFWorkbook(inputStream)) {
-
-            Sheet sheet = workbook.getSheetAt(0); // first sheet
-
-            // Skip header row (start from row 1)
-            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-                Row row = sheet.getRow(i);
-                if (row == null) continue;
-
-                Cell objectNo = row.getCell(0);
-                Cell StreetNo = row.getCell(1);
-                Cell userName = row.getCell(2);
-                Cell flatNo = row.getCell(3);
-                Cell floor = row.getCell(4);
-                Cell deviceNo = row.getCell(5);
-                Cell type = row.getCell(6);
-                Cell reading = row.getCell(7);
-                Cell value = row.getCell(8);
-
-                // Meter meter = meterRepository.findByCode(getCellValue(deviceNo));
-//                Building building = buildingRepository.findBuildingById(getCellValue(objectNo));
-//                Apartment apartment = apartmentRepository.findApartmentByBuilding(building);
-//                if (!meter.getApartment().equals(apartment)) {
-//                    //write in a log that the meter is wrong
-//                }
-//                ;
-//
-//                Measurement measurement = new Measurement();
-//                measurement.setMeter(meter);
-//                measurement.setMonth(new Date(getCellValue(reading).toString()));
-//                measurement.setValue((Integer) getCellValue(value));
-//                measurementRepository.save(measurement);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+            BuildingRepository buildingRepository) {
+        this.meterUpsertService = meterUpsertService;
+        this.apartmentUpsertService = apartmentUpsertService;
+        this.meterRepository = meterRepository;
+        this.measurementRepository = measurementRepository;
+        this.apartmentRepository = apartmentRepository;
+        this.measurementService = measurementService;
+        this.measurementUpsertService = measurementUpsertService;
+        this.buildingRepository = buildingRepository;
+        this.waterMeterRepository = waterMeterRepository;
     }
+    /**
+     * Imports *monthly* measurements from the first sheet.
+     * Creates a Measurement if meter exists; logs missing meters.
+     */
+    @Transactional
+    public DTO.ImportResult importDataForMonth(MultipartFile file) {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            Sheet sheet = wb.getSheetAt(0);
+            DataFormatter fmt = new DataFormatter();
 
+            int inserted = 0, skipped = 0, missingMeter = 0, duplicates = 0;
+            List<String> warnings = new ArrayList<>();
 
-    public void importDataForMonth(MultipartFile file) throws IOException {
-        try (InputStream inputStream = file.getInputStream();
-             Workbook workbook = new XSSFWorkbook(inputStream)) {
-
-            Sheet sheet = workbook.getSheetAt(0);
-
-            // Skip header row (start from row 1)
+            Set<String> meterCodes = new HashSet<>();
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-                Row row = sheet.getRow(i);
-                if (row == null) continue;
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                String meterCode = fmt.formatCellValue(r.getCell(6)).trim();
+                if (!meterCode.isEmpty()) meterCodes.add(meterCode);
+            }
 
-                Cell sifraZgrade = row.getCell(0);
-                Cell adresa = row.getCell(1);
-                Cell nazivKorisnika = row.getCell(2);
-                Cell serijskibrojExcel = row.getCell(5);
-                Cell dateExcel = row.getCell(7); // 2024-12-26
-                Cell valueExcel = row.getCell(8);
-                DataFormatter formatter = new DataFormatter();
-                if(serijskibrojExcel == null ){
+            List<Meter> activeMeters = meterRepository.findByCodeInAndActiveTrue(meterCodes);
+            Map<String, Meter> meterMap = activeMeters.stream()
+                    .collect(Collectors.toMap(Meter::getCode, m -> m));
+
+            List<Meter> meters = new ArrayList<>(meterMap.values());
+            Map<String, Set<LocalDate>> existingByMeter = new HashMap<>();
+            measurementRepository.findAllByMeterIn(meters).forEach(m -> {
+                existingByMeter
+                        .computeIfAbsent(m.getMeter().getCode(), k -> new HashSet<>())
+                        .add(m.getMeasureDate());
+            });
+
+            List<Measurement> buffer = new ArrayList<>();
+            final int BATCH_SIZE = 1000;
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+
+                String meterCode = fmt.formatCellValue(r.getCell(6)).trim();
+                String measurementValue = fmt.formatCellValue(r.getCell(8)).trim();
+                if (meterCode.isEmpty() || measurementValue.isEmpty()) { skipped++; continue; }
+
+                Meter meter = meterMap.get(meterCode);
+                if (meter == null) {
+                    String person = fmt.formatCellValue(r.getCell(2)).trim();
+                    warnings.add("Missing/inactive meter row " + i + ": code=" + meterCode + ", person=" + person);
+                    missingMeter++;
                     continue;
                 }
-                String serijskki_broj =  formatter.formatCellValue(serijskibrojExcel);
-                Meter meter = meterRepository.findByCode(serijskki_broj);
-                Measurement measurement = new Measurement();
-                if(meter != null) {
-                    measurement.setMeter(meter);
 
-                    if (valueExcel != null) {
-                        String value = formatter.formatCellValue(valueExcel);
-                        measurement.setValue(Integer.valueOf(value));
+                LocalDate date = parseLocalDate(r.getCell(7), fmt);
+                if (date == null) { skipped++; continue; }
 
-                    } else {
-                        measurement.setValue(0);
-                    }
-                    if (dateExcel != null) {
-                        String date = formatter.formatCellValue(dateExcel);
-                        measurement.setYear(date.split("-")[0]);
-                        measurement.setMonth(date.split("-")[1]);
-                        measurement.setDay(date.split("-")[2]);
-                    }
-                    measurement.setCreated(new Date());
-                    measurement.setCreatedBy("Import Excela");
-                    measurementRepository.save(measurement);
-
-                } else {
-                    logger.info("{} {}", serijskki_broj, nazivKorisnika);
+                Set<LocalDate> existingDates = existingByMeter.computeIfAbsent(meterCode, k -> new HashSet<>());
+                if (existingDates.contains(date)) {
+                    duplicates++;
+                    continue;
                 }
 
+                Integer value = parseInteger(measurementValue);
+                if (value == null) value = 0;
+
+                Measurement m = new Measurement();
+                m.setMeter(meter);
+                m.setMeasureDate(date);
+                m.setValue(Double.valueOf(value));
+                m.setCreatedAt(Instant.now());
+                m.setCreatedBy("Monthly Import " + YearMonth.now());
+
+                buffer.add(m);
+                inserted++;
+                existingDates.add(date);
+
+                if (buffer.size() >= BATCH_SIZE) {
+                    measurementRepository.saveAll(buffer);
+                    buffer.clear();
+                }
             }
+
+            if (!buffer.isEmpty()) {
+                measurementRepository.saveAll(buffer);
+            }
+
+            log.info("Monthly import done: inserted={}, duplicates={}, missingMeter={}, skipped={}",
+                    inserted, duplicates, missingMeter, skipped);
+
+            return new DTO.ImportResult(
+                    "TECHEM",
+                    0,
+                    inserted,
+                    duplicates,
+                    missingMeter,
+                    skipped,
+                    warnings
+            );
+
+        } catch (Exception e) {
+            log.error("Monthly import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Monthly import failed: " + e.getMessage(), e);
         }
     }
 
 
-    public void importInitalData(MultipartFile file) {
-        try (InputStream inputStream = file.getInputStream();
-             Workbook workbook = new XSSFWorkbook(inputStream)) {
+    /**
+     * Imports *initial* master data from multiple sheets.
+     * Uses find-or-create flow so it’s idempotent.
+     */
+    public void importInitialData(MultipartFile file) {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
 
-            Sheet sheet = workbook.getSheetAt(0); // first sheet
-            Sheet sheet2 = workbook.getSheetAt(1); // second sheet
-            Sheet sheet3 = workbook.getSheetAt(2); // third sheet
-            Sheet sheet4 = workbook.getSheetAt(3); // fourth sheet
+            // ---- Sheet 0 ----
+            importInitialSheet(wb.getSheetAt(0), fmt, /*logLabel*/"po vodomjerima");
 
-            // Skip header row (start from row 1)
-//            for (int i = 1; i <= sheet3.getLastRowNum(); i++) {
-//                Row row = sheet3.getRow(i);
-//                if (row == null) continue;
+            // ---- Sheet 3 ----
+//            if (wb.getNumberOfSheets() > 2) {
+//                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
+//            }
+//            if (wb.getNumberOfSheets() > 2) {
+//                importInitialSheet(wb.getSheetAt(2), fmt, "sheet2");
+//            }
 //
-//                Cell sifraZgrade = row.getCell(1);
-//                Cell grad = row.getCell(2);
-//                Cell adresa = row.getCell(3);
-//                Cell mbr = row.getCell(4);
-//                Cell nazivKorisnika = row.getCell(5);
-//                Cell serijskibroj = row.getCell(6);
-//                Cell snaga = row.getCell(7);
-//                Cell value = row.getCell(8);
+//            // ---- Sheet 2: audit missing users ----
+//            if (wb.getNumberOfSheets() > 1) {
+//                auditMissingUsersBySheet2(wb.getSheetAt(1), fmt);
+//            }
 //
-//
-//                if (findMeter(mbr.getStringCellValue(), adresa.getStringCellValue(), grad.getStringCellValue(), serijskibroj.getStringCellValue(), snaga.getStringCellValue(), sifraZgrade.getStringCellValue(), nazivKorisnika.getStringCellValue()) == null) {
-//                    //logg the data not saved
-//                    logger.info("User exists with apartment");
-//                } else {
-//                    //logg the data that is saved
-//                    logger.info("User doesnt exists in the system");
-//                }
+//            // ---- Sheet 4: audit missing users (alt layout) ----
+//            if (wb.getNumberOfSheets() > 3) {
+//                auditMissingUsersBySheet4(wb.getSheetAt(3), fmt);
 //            }
 
-            for (int i = 1; i <= sheet2.getLastRowNum(); i++) {
-                Row row = sheet2.getRow(i);
-                if (row == null) continue;
-
-
-                Cell nazivKorisnika = row.getCell(5);
-                Cell mbr = row.getCell(6);
-                Cell hep_mbr = row.getCell(7);
-
-                Apartment apartment = apartmentRepository.findApartmentByMbr(mbr.getStringCellValue());
-                if ( apartment == null ) {
-                    logger.info("User doesnt exists in the system + {}", nazivKorisnika.getStringCellValue());
-                }
-            }
-
-            for (int i = 1; i <= sheet4.getLastRowNum(); i++) {
-                Row row = sheet4.getRow(i);
-                if (row == null) continue;
-
-
-                Cell nazivKorisnika = row.getCell(5);
-                Cell mbr = row.getCell(4);
-                Cell hep_mbr = row.getCell(7);
-
-                Apartment apartment = apartmentRepository.findApartmentByMbr(mbr.getStringCellValue());
-                if ( apartment == null ) {
-                    logger.info("User doesnt exists in the system + {}", nazivKorisnika.getStringCellValue());
-                }
-            }
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Initial import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
         }
     }
 
-    public Meter findMeter(String mbr, String adress, String city, String code, String power, String buildingCode, String personName) {
+    // ---------- Internal helpers ----------
 
-        Meter meterOld = meterRepository.findByCode(code);
-        if (meterOld == null) {
-            Meter meter = new Meter();
-            meter.setApartment(findApartment(mbr, adress, city, buildingCode, personName));
-            meter.setCode(code);
-            meter.setPower(power);
-            Meter meterReturn = meterRepository.save(meter);
-            return meterReturn;
-        } else {
-            return meterOld;
-        }
+    /** Initial sheet layout: uses indices you showed in your original code. */
+    private void importInitialSheet(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
 
-    }
+        int createdMeters = 0, existingMeters = 0, rows = 0;
 
-    public Apartment findApartment(String mbr, String adress, String city, String buildingCode, String personName) {
-        Apartment apartmentOld = apartmentRepository.findApartmentByMbr(mbr);
-        Person personOld = personRepository.findPersonByFirstName(personName); // consider making this unique or using findByFirstNameIgnoreCase
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
 
-        if (apartmentOld == null) {
-            Apartment apartment = new Apartment();
-            apartment.setMbr(mbr);
-            apartment.setBuilding(findBuilding(city, adress, buildingCode));
-            Apartment saved = apartmentRepository.save(apartment);
+            String ssn = s(fmt, r.getCell(1));
+            String mjerno_mjesto = s(fmt, r.getCell(3));
+            String tip = s(fmt, r.getCell(5));
 
-            if (personOld == null) {
-                Person person = new Person();
-                person.setFirstName(personName);
-                person.addApartment(saved);
-                personRepository.save(person);
-            } else {
-                personOld.addApartment(saved);
-                personRepository.save(personOld);
+            Optional<WaterMeter> waterMeter = waterMeterRepository.findByCode(ssn);
+            if(waterMeter.isPresent()) {
+                continue;
             }
-            return saved;
-
-        } else {
-            if (personOld == null) {
-                Person person = new Person();
-                person.setFirstName(personName);
-                person.addApartment(apartmentOld);
-                personRepository.save(person);
-            } else {
-                personOld.addApartment(apartmentOld);
-                personRepository.save(personOld);
+            Optional<Apartment> existing = apartmentRepository.findByMjernoMjesto(mjerno_mjesto);
+            if (existing.isEmpty()) {
+                log.info("Mjerno mjsto not found [{}]:", mjerno_mjesto);
+                continue;
             }
-            return apartmentOld;
+
+            WaterMeter wm = new WaterMeter();
+            wm.setCode(ssn);
+            wm.setApartment(existing.get());
+            switch (tip) {
+                case "1":
+                    wm.setWaterMeterType(WaterMeterType.COLD_TECHEM);
+                    break;
+                case "4":
+                    wm.setWaterMeterType(WaterMeterType.HOT_KAMSTRUP);
+                    break;
+                case "2":
+                    wm.setWaterMeterType(WaterMeterType.COLD_KAMSTRUP);
+                    break;
+                case "3":
+                    wm.setWaterMeterType(WaterMeterType.HOT_TECHEM);
+                    break;
+            }
+                waterMeterRepository.save(wm);
+
+                createdMeters++;
+                if ((createdMeters % 200) == 0) {
+                    waterMeterRepository.flush();
+                }
+
+            }
+
+            log.info("Initial import [{}]: rows={}, cretaedApartments={}, existingMeters={}",
+                    label, rows, createdMeters, existingMeters);
+        }
+
+
+
+
+    private void importInitialSheetAll(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
+
+        int createdMeters = 0, existingMeters = 0, rows = 0;
+
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
+
+            String buildingCode = s(fmt, r.getCell(3)); // sifraZgrade
+            String city         = "Zagreb";
+            String address      = s(fmt, r.getCell(2));
+            String mbr          = s(fmt, r.getCell(4));
+            String personName   = s(fmt, r.getCell(2));
+            String siemensSN = s(fmt, r.getCell(3));
+            String meterCode    = s(fmt, r.getCell(5));
+            String power        = s(fmt, r.getCell(6));
+
+            if (meterCode == null  || city == null || siemensSN == null) {
+                log.debug("[{}] Row {} skipped: required data missing (meterCode/mbr/city)", label, i);
+                continue;
+            }
+
+            Optional<Meter> existing = meterRepository.findByCode(meterCode);
+            if(siemensSN == null || siemensSN.isEmpty()) {
+                if (existing.isPresent()) {
+                    existingMeters++;
+                    continue;
+                }
+
+            }
+
+            // Find-or-create full graph; address will be attached to the building (if provided)
+            Meter created = meterUpsertService.findOrCreateMeter(
+                    null, address, city, meterCode, power, buildingCode, personName,siemensSN
+            );
+
+            if (created != null) {
+                createdMeters++;
+                if ((createdMeters % 200) == 0) {
+                    meterRepository.flush();
+                }
+            }
+        }
+
+        log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                label, rows, createdMeters, existingMeters);
+    }
+
+    public List<String> checkBuildingsTechem(MultipartFile file) throws IOException {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+
+            Sheet sheet = wb.getSheetAt(0);
+            DataFormatter fmt = new DataFormatter();
+
+            List<String> missingBuildings = new ArrayList<>();
+            Set<String> buildingCodes = new HashSet<>();
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                String buildingCode = fmt.formatCellValue(r.getCell(0)).trim();
+                if (!buildingCode.isEmpty()) buildingCodes.add(buildingCode);
+            }
+
+            List<Building> buildings = buildingRepository.findAll();
+            for (Building building : buildings) {
+                if(building.getTechem() == null) continue;
+                if(building.getTechem().equals("1") && !buildingCodes.contains(building.getCode())) {
+                    missingBuildings.add(building.getCode());
+                }
+            }
+            return missingBuildings;
         }
     }
 
 
-    public Building findBuilding(String cityString, String adress, String buildingCode) {
-        Building buildingOld = buildingRepository.findBuildingByAddress(adress);
-        if (buildingOld == null) {
-            Building building = new Building();
-            building.setAddress(adress);
-            building.setCode(buildingCode);
-            building.setCity(findCity(cityString));
-            return buildingRepository.save(building);
-        } else {
-            return buildingOld;
+
+
+    /** Audit sheet2: logs persons whose apartments (by MBR) are missing. */
+    private void auditMissingUsersBySheet2(Sheet sheet, DataFormatter fmt) {
+        if (sheet == null) return;
+
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+
+            String personName = s(fmt, r.getCell(5));
+            String mbr        = s(fmt, r.getCell(6));
+            // String hepMbr  = s(fmt, r.getCell(7)); // optional
+
+            // If you kept ApartmentRepository.findByMbr, you can call it here if desired
+            // Optional<Apartment> a = apartmentRepository.findByMbr(mbr);
+            // if (a.isEmpty()) log.info( doesn't exist (sheet2): {}", personName);
+
+            // Since we’ve centralized creation in MeterUpsertService, this remains a simple audit log.
+            log.debug("Audit (sheet2) row {} – person='{}', mbr='{}'", i, personName, mbr);
         }
     }
 
-    public City findCity(String cityString) {
-        City city = cityRepository.findByName(cityString);
-        if (city == null) {
-            City cityNew = new City();
-            cityNew.setName(cityString);
-            return cityRepository.save(cityNew);
-        } else {
-            return city;
+    /** Audit sheet4: similar, slightly different column positions. */
+    private void auditMissingUsersBySheet4(Sheet sheet, DataFormatter fmt) {
+        if (sheet == null) return;
+
+        for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+
+            String personName = s(fmt, r.getCell(5));
+            String mbr        = s(fmt, r.getCell(4));
+            // String hepMbr  = s(fmt, r.getCell(7));
+
+            log.debug("Audit (sheet4) row {} – person='{}', mbr='{}'", i, personName, mbr);
         }
     }
 
+    // ---------- Parsing utilities ----------
 
-    private Object getCellValue(Cell cell) {
+    private static String s(DataFormatter fmt, Cell cell) {
         if (cell == null) return null;
+        String val = fmt.formatCellValue(cell);
+        if (val == null) return null;
+        val = val.trim();
+        return val.isEmpty() ? null : val;
+    }
 
-        switch (cell.getCellType()) {
-            case STRING:
-                return cell.getStringCellValue().trim();
+    private static Integer parseInteger(String s) {
+        try {
+            return (s == null || s.isBlank()) ? null : Integer.valueOf(s.trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
 
-            case NUMERIC:
-                if (DateUtil.isCellDateFormatted(cell)) {
-                    return cell.getDateCellValue(); // returns java.util.Date
+    /**
+     * Supports ISO strings (yyyy-MM-dd) or Excel numeric date cells.
+     */
+    private static LocalDate parseLocalDate(Cell dateCell, DataFormatter fmt) {
+        if (dateCell == null) return null;
+
+        // If it’s numeric and is a date-formatted cell -> convert directly
+        if (dateCell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(dateCell)) {
+            return dateCell.getDateCellValue()
+                    .toInstant()
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate();
+        }
+
+        // Else try formatted text (ISO string)
+        String text = fmt.formatCellValue(dateCell);
+        if (text == null || text.isBlank()) return null;
+
+        try {
+            return LocalDate.parse(text.trim()); // expects yyyy-MM-dd
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+
+
+    public void importSequence(MultipartFile file) {
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
+
+            importInitialSheetSequence(wb.getSheetAt(0), fmt, /*logLabel*/"sheet0");
+
+
+        } catch (Exception e) {
+            log.error("import sequence failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
+    public void importMissingMeters(MissingMetersDataViewModel viewModel) {
+        for(String hepMbr : viewModel.getHepMbr()) {
+            Optional<Apartment> apartmentExists = apartmentRepository.findByHepMBR(hepMbr);
+            if(apartmentExists.isEmpty()) {
+                Apartment apartment = new Apartment();
+                apartment.setHepMBR(hepMbr);
+                apartment.setMbr("Ne postoji gledamo hep mbr" + viewModel.getHepMbr());
+                apartment.setBuilding(buildingRepository.findByCodeIgnoreCase(viewModel.getBuildingId()).get());
+                apartmentRepository.save(apartment);
+            }
+        }
+    }
+
+    public void importNewMeters(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file is empty or null");
+        }
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
+            Sheet sheet = wb.getSheetAt(0);
+            if (sheet == null) return;
+
+            int createdMeters = 0, existingMeters = 0, rows = 0;
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                rows++;
+
+                String mbr          = s(fmt, r.getCell(2));
+                String siemensSN          = s(fmt, r.getCell(5));
+                String sntechem          = s(fmt, r.getCell(6));
+
+
+                Apartment apartment = apartmentRepository.findByMbr(mbr).orElseThrow(null);
+
+                Optional<Meter> existing = meterRepository.findByCodeAndApartment_Id(sntechem,apartment.getId());
+                if(existing.isPresent()) {
+                    existing.get().setActive(false);
+                    meterRepository.save(existing.get());
+                }
+                Meter meter = new Meter();
+                meter.setCode(siemensSN);
+                meter.setActive(true);
+                meter.setApartment(apartment);
+                meterRepository.save(meter);
+            }
+
+            log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                    "", rows, createdMeters, existingMeters);
+
+        } catch (Exception e) {
+            log.error("Initial import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
+    public void importNewMetersJD7(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Uploaded file is empty or null");
+        }
+        try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+            DataFormatter fmt = new DataFormatter();
+            Sheet sheet = wb.getSheetAt(0);
+            if (sheet == null) return;
+
+            int createdMeters = 0, existingMeters = 0, rows = 0;
+
+            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+                Row r = sheet.getRow(i);
+                if (r == null) continue;
+                rows++;
+
+                //String naziv          = s(fmt, r.getCell(7));
+                String sn          = s(fmt, r.getCell(6));
+                String power          = s(fmt, r.getCell(9));
+                String datum          = s(fmt, r.getCell(7));
+                String vrijednost          = s(fmt, r.getCell(8));
+
+                Meter meter = meterRepository.findByCode(sn).orElseThrow(null);
+                if(meter != null) {
+                    Measurement measurement = new Measurement();
+                    measurement.setValue(Double.valueOf(Integer.valueOf(vrijednost)));
+                    measurement.setMeasureDate(LocalDate.parse(datum));
+                    measurement.setMeter(meter);
+                    measurementRepository.save(measurement);
                 } else {
-                    double numericValue = cell.getNumericCellValue();
-                    // Check if the number is an integer (whole number)
-                    if (numericValue == Math.floor(numericValue)) {
-                        return (long) numericValue; // return Long
-                    } else {
-                        return numericValue; // return Double
+                    log.info("No meter for {}",
+                            "", sn);
+                }
+
+
+//                Meter meter = meterUpsertService.findOrCreateMeter(naziv,"Jurja Damlatinca 7","Vinkovci",sn,power,"93600007",naziv,sn);
+//                if(meter != null) {
+//                    Measurement measurement = new Measurement();
+//                    measurement.setMeter(meter);
+//                    measurement.setMeasureDate(LocalDate.parse(datum));
+//                    measurement.setValue(Integer.valueOf(vrijednost));
+//                    measurementRepository.save(measurement);
+//                }
+            }
+
+            log.info("Initial import [{}]: rows={}, createdMeters={}, existingMeters={}",
+                    "", rows, createdMeters, existingMeters);
+
+        } catch (Exception e) {
+            log.error("Initial import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Initial import failed", e);
+        }
+    }
+
+
+
+    private void importInitialSheetSequence(Sheet sheet, DataFormatter fmt, String label) {
+        if (sheet == null) return;
+
+        int updatedMeters = 0, existingMeters = 0, rows = 0;
+
+        for (int i = 0; i <= sheet.getLastRowNum(); i++) {
+            Row r = sheet.getRow(i);
+            if (r == null) continue;
+            rows++;
+
+            String seq = s(fmt, r.getCell(0));
+            String mbr = s(fmt, r.getCell(1));
+
+
+            if(seq == null || mbr == null ) {
+                log.info("Missing for  import hep_mbr = {}, seq={}",
+                        seq, mbr);
+                continue;
+            }
+
+            Optional<Apartment> apartment = apartmentRepository.findByMbr(mbr);
+            if(apartment.isPresent()) {
+                apartment.get().setSequence(Integer.valueOf(seq));
+                apartmentRepository.save(apartment.get());
+                updatedMeters++;
+            }
+
+        }
+
+        log.info("Initial import [{}]: rows={}, createdMeters={}",
+                label, rows, updatedMeters);
+    }
+
+
+
+    @Transactional
+    public DTO.ImportResult importXML(MultipartFile file) {
+        int createdMeasurements = 0;
+        List<String> warnings = new ArrayList<>();
+
+        try (InputStream is = file.getInputStream()) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+                Element measuredev = (Element) measuredevList.item(i);
+
+                String fabnr = safeGetText(measuredev, "fabnr");
+                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+
+                // datetime
+                String datetimeCandidate = null;
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if ("datetime".equalsIgnoreCase(dim)) {
+                        datetimeCandidate = safeGetText(dp, "value");
+                        break;
                     }
                 }
 
-            case BOOLEAN:
-                return cell.getBooleanCellValue(); // returns Boolean
+                if (datetimeCandidate == null) {
+                    String xmlDate = safeGetText(measuredev, "date");
+                    String xmlTime = safeGetText(measuredev, "time");
+                    if (!xmlDate.isEmpty()) {
+                        datetimeCandidate = xmlTime.isEmpty() ? xmlDate : xmlDate + " " + xmlTime;
+                    }
+                }
 
-            case FORMULA:
-                // Evaluate formula if needed
-                FormulaEvaluator evaluator = cell.getSheet().getWorkbook().getCreationHelper().createFormulaEvaluator();
-                return getCellValue(evaluator.evaluateInCell(cell)); // recursively get the evaluated value
+                String isoDatetime = parseToIso(datetimeCandidate);
 
-            case BLANK:
-                return null;
+                // H.C.A. datapoint
+                Element hcaDatapoint = null;
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if (dim == null) continue;
+                    if ("H.C.A.".equalsIgnoreCase(dim.trim())) {
+                        hcaDatapoint = dp;
+                        break;
+                    }
+                }
+                if (hcaDatapoint == null) continue;
 
-            default:
-                return null;
+                String value = safeGetText(hcaDatapoint, "value");
+                if (value == null || value.trim().isEmpty() || value.contains("--.--.--")) continue;
+
+                String deviceId = identnr.isEmpty() ? fabnr : identnr;
+
+                Measurement measurement = measurementUpsertService.createMeasurement(
+                        isoDatetime,
+                        value,
+                        deviceId
+                );
+
+                if (measurement != null) createdMeasurements++;
+            }
+
+            log.info("Imported XML: createdMeasurements={}", createdMeasurements);
+
+            return new DTO.ImportResult(
+                    "XML",
+                    createdMeasurements,
+                    0, 0, 0, 0,
+                    warnings
+            );
+
+        } catch (Exception e) {
+            log.error("Import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Import failed: " + e.getMessage(), e);
         }
     }
+
+    @Transactional
+    public DTO.ImportResult importXMLFast(MultipartFile file) {
+        int createdMeasurements = 0;
+        int missingMeters = 0;
+        int skippedNoHca = 0;
+        int skippedBadValue = 0;
+        int skippedBadDate = 0;
+        int skippedDuplicate = 0;
+        final int MISSING_LOG_LIMIT = 500; // da ne ubije log ako ih je 50k
+        java.util.Set<String> missingDeviceIds = new java.util.LinkedHashSet<>();
+
+        List<String> warnings = new ArrayList<>();
+
+        // cache: deviceId -> Meter (null znači: već smo probali i ne postoji)
+        Map<String, Meter> meterCache = new HashMap<>();
+
+        try (InputStream is = file.getInputStream()) {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+                Element measuredev = (Element) measuredevList.item(i);
+
+                String fabnr = safeGetText(measuredev, "fabnr");
+
+                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+
+                String deviceId = (identnr != null && !identnr.trim().isEmpty())
+                        ? identnr.trim()
+                        : (fabnr == null ? "" : fabnr.trim());
+
+                if (deviceId.isEmpty()) {
+                    missingMeters++;
+                    continue;
+                }
+
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                String datetimeCandidate = null;
+                Element hcaDatapoint = null;
+
+                // 1 pass kroz datapoints: tražimo datetime i H.C.A.
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+                    String dim = safeGetText(dp, "dimension");
+                    if (dim == null) continue;
+                    dim = dim.trim();
+
+                    if (datetimeCandidate == null && "datetime".equalsIgnoreCase(dim)) {
+                        datetimeCandidate = safeGetText(dp, "value");
+                    } else if (hcaDatapoint == null && "H.C.A.".equalsIgnoreCase(dim)) {
+                        hcaDatapoint = dp;
+                    }
+
+                    if (datetimeCandidate != null && hcaDatapoint != null) break;
+                }
+
+                if (datetimeCandidate == null) {
+                    String xmlDate = safeGetText(measuredev, "date");
+                    String xmlTime = safeGetText(measuredev, "time");
+                    if (xmlDate != null && !xmlDate.trim().isEmpty()) {
+                        datetimeCandidate = (xmlTime == null || xmlTime.trim().isEmpty())
+                                ? xmlDate
+                                : xmlDate + " " + xmlTime;
+                    }
+                }
+
+                String isoDatetime;
+                try {
+                    isoDatetime = parseToIso(datetimeCandidate);
+                } catch (Exception ex) {
+                    skippedBadDate++;
+                    continue;
+                }
+
+                if (hcaDatapoint == null) {
+                    skippedNoHca++;
+                    continue;
+                }
+
+                String value = safeGetText(hcaDatapoint, "value");
+                if (value == null) {
+                    skippedBadValue++;
+                    continue;
+                }
+                value = value.trim();
+                if (value.isEmpty() || value.contains("--.--.--")) {
+                    skippedBadValue++;
+                    continue;
+                }
+
+                // resolver s cacheom (1 DB hit po novom deviceId-u)
+                java.util.function.Function<String, Meter> meterResolver = (code) ->
+                        meterCache.computeIfAbsent(code, c ->
+                                meterRepository.findByCodeAndActiveTrue(c).orElse(null)
+                        );
+
+                Meter meter = meterResolver.apply(deviceId);
+                if (meter == null) {
+                    missingMeters++;
+
+                    // skupljaj SAMO one koji fale (limitirano)
+                    if (missingDeviceIds.size() < MISSING_LOG_LIMIT) {
+                        missingDeviceIds.add(deviceId);
+                    }
+
+                    continue;
+                }
+
+                boolean created = measurementUpsertService.createMeasurementFast(
+                        isoDatetime,
+                        value,
+                        deviceId,
+                        meterResolver
+                );
+
+                if (created) {
+                    createdMeasurements++;
+                } else {
+                    // nije created => ili duplikat ili nešto invalid (ali mi gore već filtriramo),
+                    // realno ovdje je najčešće duplikat
+                    skippedDuplicate++;
+                }
+            }
+            if (missingMeters > 0) {
+                if (!missingDeviceIds.isEmpty()) {
+                    log.warn("Missing meters (not found or inactive). Count={}, showing up to {}: {}",
+                            missingMeters, MISSING_LOG_LIMIT, String.join(", ", missingDeviceIds));
+                    if (missingDeviceIds.size() == MISSING_LOG_LIMIT) {
+                        log.warn("Missing meters list truncated at {} items. Increase MISSING_LOG_LIMIT if needed.", MISSING_LOG_LIMIT);
+                    }
+                } else {
+                    log.warn("Missing meters (not found or inactive). Count={}", missingMeters);
+                }
+            }
+            log.info(
+                    "Imported XML: created={}, missingMeters={}, noHca={}, badValue={}, badDate={}, duplicates={}",
+                    createdMeasurements, missingMeters, skippedNoHca, skippedBadValue, skippedBadDate, skippedDuplicate
+            );
+
+            return new DTO.ImportResult(
+                    "XML",
+                    createdMeasurements,
+                    0, 0, 0, 0,
+                    warnings
+            );
+
+        } catch (Exception e) {
+            log.error("Import failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Import failed: " + e.getMessage(), e);
+        }
+    }
+
+
+
+//        int createdMeasurements = 0;
+//
+//        try (InputStream is = file.getInputStream()) {
+//            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+//            DocumentBuilder builder = factory.newDocumentBuilder();
+//            Document doc = builder.parse(is);
+//            doc.getDocumentElement().normalize();
+//
+//            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+//
+//            for (int i = 0; i < measuredevList.getLength(); i++) {
+//                Element measuredev = (Element) measuredevList.item(i);
+//                String nr = measuredev.getAttribute("nr");
+//
+//                String fabnr = safeGetText(measuredev, "fabnr");
+//                Element fixedHeader = (Element) measuredev.getElementsByTagName("fixeddataheader").item(0);
+//                String identnr = fixedHeader == null ? "" : safeGetText(fixedHeader, "identnr");
+//
+//                // Build datetime candidate: prefer datapoint dimension="datetime", else combine <date> + <time>
+//                String datetimeCandidate = null;
+//                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+//                for (int j = 0; j < datapoints.getLength(); j++) {
+//                    Element dp = (Element) datapoints.item(j);
+//                    String dim = safeGetText(dp, "dimension");
+//                    if ("datetime".equalsIgnoreCase(dim)) {
+//                        datetimeCandidate = safeGetText(dp, "value"); // e.g. "26.10.25 16:01:00"
+//                        break;
+//                    }
+//                }
+//                if (datetimeCandidate == null) {
+//                    String xmlDate = safeGetText(measuredev, "date"); // e.g. "26.10.25"
+//                    String xmlTime = safeGetText(measuredev, "time"); // e.g. "16:01:00"
+//                    if (!xmlDate.isEmpty()) {
+//                        datetimeCandidate = xmlTime.isEmpty() ? xmlDate : (xmlDate + " " + xmlTime);
+//                    }
+//                }
+//                String isoDatetime = parseToIso(datetimeCandidate); // may be null if can't parse
+//
+//                // Only process the SECOND datapoint (index 1)
+//                if (datapoints.getLength() < 2) {
+//                    continue;
+//                }
+//                Element secondDp = (Element) datapoints.item(1);
+//                String secondValue = safeGetText(secondDp, "value");
+//                String secondDimension = safeGetText(secondDp, "dimension");
+//
+//                // Skip placeholder/error values
+//                if (secondValue == null || secondValue.trim().isEmpty() || secondValue.contains("--.--.--")) {
+//                    continue;
+//                }
+//
+//                // Choose identifier: prefer identnr, fallback to fabnr
+//                String deviceId = identnr.isEmpty() ? fabnr : identnr;
+//
+//                // Call your upsert. Keep signature as-is (String isoDatetime) or refactor to accept LocalDate/LocalDateTime.
+//                Measurement measurement = measurementUpsertService.createMeasurement(isoDatetime, secondValue, deviceId);
+//                if (measurement != null) {
+//                    createdMeasurements++;
+//                }
+//            }
+//
+//            log.info("Imported: createdMeasurements={}", createdMeasurements);
+//        } catch (Exception e) {
+//            log.error("Import failed: {}", e.getMessage(), e);
+//            throw new RuntimeException("Import failed", e);
+//        }
+//    }
+
+    private String safeGetText(Element parent, String tagName) {
+        NodeList nl = parent.getElementsByTagName(tagName);
+        if (nl == null || nl.getLength() == 0 || nl.item(0) == null) return "";
+        String txt = nl.item(0).getTextContent();
+        return txt == null ? "" : txt.trim();
+    }
+
+    private static String parseToIso(String input) {
+        if (input == null || input.isBlank()) return null;
+
+        // Try: "dd.MM.yy HH:mm:ss"
+        DateTimeFormatter dtFormatter1 = DateTimeFormatter.ofPattern("dd.MM.yy HH:mm:ss", Locale.ENGLISH);
+        // Try: "dd.MM.yy"
+        DateTimeFormatter dFormatter = DateTimeFormatter.ofPattern("dd.MM.yy", Locale.ENGLISH);
+
+        try {
+            if (input.contains(" ")) {
+                LocalDateTime ldt = LocalDateTime.parse(input, dtFormatter1);
+                return ldt.toString(); // ISO_LOCAL_DATE_TIME
+            } else {
+                LocalDate ld = LocalDate.parse(input, dFormatter);
+                return ld.toString(); // ISO_LOCAL_DATE
+            }
+        } catch (DateTimeParseException ex) {
+            // Try a slightly different pattern (maybe 4-digit year or different separators)
+            try {
+                DateTimeFormatter dtFormatter2 = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.ENGLISH);
+                if (input.contains(" ")) {
+                    LocalDateTime ldt = LocalDateTime.parse(input, dtFormatter2);
+                    return ldt.toString();
+                }
+            } catch (DateTimeParseException e2) {
+                // As a last resort, return the raw input (or null) so the service can decide
+                return input;
+            }
+        }
+        return input;
+    }
+
+    @Transactional
+    public List<String> extractFabnrForDate(MultipartFile file) {
+
+        List<String> result = new ArrayList<>();
+
+        try (InputStream is = file.getInputStream()) {
+
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+
+                Element measuredev = (Element) measuredevList.item(i);
+
+                // ---- fabnr
+                String fabnr = safeGetText(measuredev, "fabnr");
+                if (fabnr.isEmpty()) {
+                    continue;
+                }
+
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                String dateValue = null;
+                int hcaSum = 0;
+
+
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+
+                    String dimension = safeGetText(dp, "dimension");
+                    String value = safeGetText(dp, "value");
+
+                    if ("date".equalsIgnoreCase(dimension)) {
+                        dateValue = value;
+                    }
+
+                    if ("H.C.A.".equalsIgnoreCase(dimension)) {
+                        hcaSum = Integer.parseInt(value);
+                     break;
+                    }
+                }
+
+//                // ---- mora biti datum 31.12.25
+//                if (!"31.12.25".equals(dateValue) && !"31.12.2025".equals(dateValue)) {
+//                    continue;
+//                }
+
+                // ---- check for duplicates
+                List<Meter> meters = meterRepository.findAllByCodeAndActive(fabnr,true);
+                if (meters.isEmpty()) {
+                    continue; // no meter found
+                }
+                if (meters.size() > 1) {
+                    throw new RuntimeException(
+                            "Duplicate meters found for code: " + fabnr + " (" + meters.size() + " entries)"
+                    );
+                }
+
+                Meter meter = meters.get(0);
+                LocalDate targetDate = LocalDate.of(2026, 1, 24);
+
+                // Find the measurement with the target date
+                Measurement measurement = meter.getMeasurements().stream()
+                        .filter(m -> m.getMeasureDate().equals(targetDate))
+                        .findFirst()
+                        .orElse(null);
+
+                if (measurement != null) {
+                    measurement.setValue((double) 6);
+                    measurementRepository.save(measurement);
+                }
+
+                // ---- rezultat
+                result.add(
+                        "<fabnr>" + fabnr + "</fabnr> | " +
+                                "date=" + dateValue + " | " +
+                                "HCA_SUM=" + hcaSum
+                );
+            }
+
+        } catch (Exception e) {
+            log.error("XML processing failed", e);
+            throw new RuntimeException("XML processing failed", e);
+        }
+
+        return result;
+    }
+
+    @Transactional
+    public List<String> extractFabnrForDateNew(MultipartFile file) {
+
+        List<String> result = new ArrayList<>();
+
+        try (InputStream is = file.getInputStream()) {
+
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(is);
+            doc.getDocumentElement().normalize();
+
+            NodeList measuredevList = doc.getElementsByTagName("measuredev");
+
+            for (int i = 0; i < measuredevList.getLength(); i++) {
+
+                Element measuredev = (Element) measuredevList.item(i);
+
+                String fabnr = safeGetText(measuredev, "fabnr");
+                if (fabnr.isEmpty()) continue;
+
+                NodeList datapoints = measuredev.getElementsByTagName("datapoint");
+
+                String dateValue = null;
+
+                Integer hcaValue = null;   // <-- OVERWRITE vrijednost iz filea
+                boolean hasHca = false;
+                int hcaSeen = 0;
+
+                for (int j = 0; j < datapoints.getLength(); j++) {
+                    Element dp = (Element) datapoints.item(j);
+
+                    String dimension = safeGetText(dp, "dimension");
+                    String value = safeGetText(dp, "value");
+
+                    // DATE
+                    if ("date".equalsIgnoreCase(dimension)) {
+                        dateValue = value;
+                        continue;
+                    }
+
+                    // H.C.A. (uzmi prvi valjani unutar prva 4)
+                    if ("H.C.A.".equalsIgnoreCase(dimension)) {
+                        hcaSeen++;
+
+                        if (value != null && !value.isEmpty() && !value.contains("--")) {
+                            try {
+                                hcaValue = Integer.parseInt(value); // <-- ne zbraja, samo postavi
+                                hasHca = true;
+                                break; // <-- čim nađeš prvi valjani, prekini
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
+
+                        if (hcaSeen >= 4) break; // kao i prije: limit na prva 4 HCA datapointa
+                    }
+                }
+
+                // mora biti datum 31.12.25
+                if (!"31.12.25".equals(dateValue) && !"31.12.2025".equals(dateValue)) {
+                    continue;
+                }
+
+                // mora postojati barem jedan H.C.A.
+                if (!hasHca) {
+                    continue;
+                }
+
+                // samo rezultat (bez DB upisa)
+                result.add(
+                        "<fabnr>" + fabnr + "</fabnr> | " +
+                                "date=" + dateValue + " | " +
+                                "HCA=" + hcaValue
+                );
+            }
+
+        } catch (Exception e) {
+            log.error("XML processing failed", e);
+            throw new RuntimeException("XML processing failed", e);
+        }
+
+        return result;
+    }
+
 
 }

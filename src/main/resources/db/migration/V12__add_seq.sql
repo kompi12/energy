@@ -1,0 +1,2 @@
+ALTER SEQUENCE dispatch_item_seq INCREMENT BY 50;
+ALTER SEQUENCE dispatch_event_seq INCREMENT BY 50;

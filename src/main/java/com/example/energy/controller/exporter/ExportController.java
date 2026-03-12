@@ -1,41 +1,171 @@
 package com.example.energy.controller.exporter;
 
-import com.example.energy.response.EnergyResponse;
+import com.example.energy.service.export.ExportExcelService;
 import com.example.energy.service.export.ExportService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
+import com.example.energy.viewmodel.ApartmentViewModel;
+import com.example.energy.viewmodel.dto.ExportDataViewModel;
+import org.springframework.http.*;
+import org.springframework.web.bind.annotation.*;
+import java.io.IOException;
 
 @RestController
-@RequestMapping("/export")
+@RequestMapping("/api/export")
 public class ExportController {
 
-    public ExportController(ExportService exportService) {
+    private final ExportService exportService;
+    private final ExportExcelService exportExcelService;
+
+    public ExportController(ExportService exportService, ExportExcelService exportExcelService) {
         this.exportService = exportService;
+        this.exportExcelService = exportExcelService;
     }
 
-
-    private  final ExportService exportService;
-
-    @PostMapping
-    @RequestMapping("/importExcelData")
-    public EnergyResponse importData(@RequestParam("file") MultipartFile file) {
+    @PostMapping("/buildings")
+    public ResponseEntity<byte[]> exportBuildings(@RequestBody ExportDataViewModel exportData) {
         try {
-            exportService.importInitalData(file);
-            return EnergyResponse.success(EnergyResponse.success("File uploaded successfully", null));
+            byte[] zipResponse = exportService.exportDataForBuildings(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 
-        } catch(Exception ex) {
-            ex.printStackTrace();
-            return EnergyResponse.error(500,"error");
+    @PostMapping("/buildingsJD7")
+    public ResponseEntity<byte[]> exportBuildingsJD7(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsJD7(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 
+    @PostMapping("/buildingsVinkovci")
+    public ResponseEntity<byte[]> exportBuildingsVinkovci(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsVinkovciOneSheet(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
         }
     }
 
 
+    @PostMapping("/buildingsP")
+    public ResponseEntity<byte[]> exportPerosn(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPerson(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 
 
+    @PostMapping("/buildingsPersonByMeter")
+    public ResponseEntity<byte[]> exportPersonByMeter(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.exportDataForBuildingsWithPersonForMeters(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 
 
+    @PostMapping("/buildingsPersonKumulativno")
+    public ResponseEntity<byte[]> exportPersonKumulativno(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportExcelService.exportByApartments(exportData);
+
+            //byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoOld(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/buildingsPersonVinkovci")
+    public ResponseEntity<byte[]> exportPersonKumulativnoVinkovci(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportExcelService.exportByApartmentsVinkovci(exportData);
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/buildingsPersonKumulativnoMeter")
+    public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMeters(@RequestBody ExportDataViewModel exportData) {
+        try {
+             byte[] zipResponse = exportService.exportDataForBuildingsWithPersonKumulativnoByMeters(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/buildingsPersonKumulativnoMeterDynamic")
+    public ResponseEntity<byte[]> exportDataForBuildingsWithPersonKumulativnoByMetersDynamic(@RequestBody ExportDataViewModel exportData) {
+        try {
+            byte[] zipResponse = exportExcelService.exportByMeters(exportData);
+
+           // byte[] zipResponse = exportExcelService.exportDataForBuildingsWithPersonKumulativnoByMetersDynamic(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+
+    @PostMapping("/personDataByApartmentNumber")
+    public ResponseEntity<byte[]> personDataByApartmentNumber(@RequestBody ApartmentViewModel exportData) {
+        try {
+            byte[] zipResponse = exportService.personDataByApartmentNumber(exportData);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=buildings_export.zip")
+                    .contentType(MediaType.parseMediaType("application/zip"))
+                    .body(zipResponse);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 }
