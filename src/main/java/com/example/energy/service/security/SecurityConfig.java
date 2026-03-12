@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/error").permitAll()
+                        .requestMatchers("/public/**").permitAll()
                         .requestMatchers("/api/import/**").hasRole("ADMIN")
                         .anyRequest().authenticated()
                 )
