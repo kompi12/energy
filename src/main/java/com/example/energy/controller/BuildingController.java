@@ -59,6 +59,12 @@ public class BuildingController {
         return service.createFull(req);
     }
 
+    @PostMapping("/listFilterBuildings")
+    public List<DTO.BuildingDto> getBuildingsHeat(@RequestBody DTO.RequestBodyHeat req) {
+        return service.getAllBuildingsHeater(req);
+    }
+
+
     @PostMapping("/{id}/apartments")
     public DTO.ApartmentDto createApartment(@PathVariable Long id, @RequestBody CreateApartmentRequest req) {
         return service.createApartment(id, req);

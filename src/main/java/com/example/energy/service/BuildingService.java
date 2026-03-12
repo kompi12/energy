@@ -84,6 +84,15 @@ public class BuildingService {
                 .toList();
     }
 
+
+    public List<DTO.BuildingDto> getAllBuildingsHeater(DTO.RequestBodyHeat body) {
+        return buildingRepo.findAllWithAddresses()
+                .stream()
+                .filter(body.heat() ? building -> building.getHeat().equals(true) : building -> building.getWater().equals(true) )
+                .map(DTOMapper::toDto)
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public List<DTO.ApartmentRowDto> listApartmentsForBuilding(Long buildingId) {
 

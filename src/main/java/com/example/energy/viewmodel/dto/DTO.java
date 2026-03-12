@@ -172,4 +172,10 @@ public class DTO {
             java.util.List<String> warnings
     ) {}
 
+
+    public record RequestBodyHeat(
+            Boolean heat,
+            Boolean water
+    ) {}
+
 }

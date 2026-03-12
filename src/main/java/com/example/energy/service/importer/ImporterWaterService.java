@@ -6,6 +6,7 @@ import com.example.energy.service.ApartmentUpsertService;
 import com.example.energy.service.MeasurementService;
 import com.example.energy.service.MeasurementUpsertService;
 import com.example.energy.service.WaterMeterService;
+import com.example.energy.viewmodel.dto.DTO;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
@@ -62,68 +63,168 @@ public class ImporterWaterService {
      * Creates a Measurement if waterMeter exists; logs missing waterMeters.
      */
     @Transactional
-    public void importDataForMonth(MultipartFile file) {
+    public DTO.ImportResult importWaterDataForMonth(MultipartFile file) {
+
+        int inserted = 0;
+        int missingWaterMeter = 0;
+        int skippedEmpty = 0;
+        int skippedBadDate = 0;
+        int skippedBadValue = 0;
+        int duplicates = 0;
+
+        final int BATCH_SIZE = 1000;
+        final int MISSING_LOG_LIMIT = 500;
+        final int WARNING_LIMIT = 1000;
+
+        Set<String> missingWaterMeterCodes = new LinkedHashSet<>();
+        List<String> warnings = new ArrayList<>();
+
         try (InputStream in = file.getInputStream(); Workbook wb = new XSSFWorkbook(in)) {
+
             Sheet sheet = wb.getSheetAt(0);
             DataFormatter fmt = new DataFormatter();
 
-            int inserted = 0, skipped = 0, missingwaterMeter = 0, duplicates = 0;
-
-            // 1️⃣ Collect all waterMeter codes from the Excel
             Set<String> waterMeterCodes = new HashSet<>();
+
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row r = sheet.getRow(i);
                 if (r == null) continue;
-                String waterMeterCode = fmt.formatCellValue(r.getCell(6)).trim();
-                if (!waterMeterCode.isEmpty()) waterMeterCodes.add(waterMeterCode);
+
+                String code = fmt.formatCellValue(r.getCell(6)).trim();
+                if (!code.isEmpty()) {
+                    waterMeterCodes.add(code);
+                }
             }
-           // List<waterMeter> activewaterMeters =waterMeterRepository.findByCodeInAndActiveTrueAndApartmentActiveTrue(waterMeterCodes,true,true);
-            List<WaterMeter> activewaterMeters = waterMeterRepository.findByCodeInAndActiveTrue(waterMeterCodes);
-            Map<String, WaterMeter> waterMeterMap = activewaterMeters.stream()
+
+            List<WaterMeter> activeWaterMeters =
+                    waterMeterRepository.findByCodeInAndActiveTrue(waterMeterCodes);
+
+            Map<String, WaterMeter> waterMeterMap = activeWaterMeters.stream()
                     .collect(Collectors.toMap(WaterMeter::getCode, m -> m));
 
-            // 3️⃣ Preload existing measurements for these waterMeters (current month or all)
             List<WaterMeter> waterMeters = new ArrayList<>(waterMeterMap.values());
-            Map<String, Set<LocalDate>> existingBywaterMeter = new HashMap<>();
-            measurementRepository.findAllByWaterMeterIn(waterMeters).forEach(m -> {
-                existingBywaterMeter
-                        .computeIfAbsent(m.getWaterMeter().getCode(), k -> new HashSet<>())
-                        .add(m.getMeasureDate());
-            });
 
+            Map<String, Set<LocalDate>> existingByWaterMeter = new HashMap<>();
+
+            if (!waterMeters.isEmpty()) {
+                measurementRepository.findAllByWaterMeterIn(waterMeters)
+                        .forEach(m -> {
+
+                            if (m.getWaterMeter() == null) return;
+
+                            existingByWaterMeter
+                                    .computeIfAbsent(
+                                            m.getWaterMeter().getCode(),
+                                            k -> new HashSet<>()
+                                    )
+                                    .add(m.getMeasureDate());
+                        });
+            }
 
             List<Measurement> buffer = new ArrayList<>();
-            final int BATCH_SIZE = 500;
 
-            // 4️⃣ Iterate rows
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+
                 Row r = sheet.getRow(i);
                 if (r == null) continue;
 
                 String waterMeterCode = fmt.formatCellValue(r.getCell(6)).trim();
                 String measurementValue = fmt.formatCellValue(r.getCell(8)).trim();
-                if (waterMeterCode.isEmpty() || measurementValue.isEmpty()) { skipped++; continue; }
 
-                WaterMeter waterMeter = waterMeterMap.get(waterMeterCode);
-                if (waterMeter == null) {
-                    String person = fmt.formatCellValue(r.getCell(2)).trim();
-                    log.info("Missing or inactive water waterMeter for row {}: code='{}', person='{}'", i, waterMeterCode, person);
-                    missingwaterMeter++;
+                if (waterMeterCode.isEmpty() || measurementValue.isEmpty()) {
+
+                    skippedEmpty++;
+
+                    if (warnings.size() < WARNING_LIMIT) {
+                        warnings.add(
+                                "Row " + i +
+                                        " skipped: empty code/value (waterMeter=" +
+                                        waterMeterCode +
+                                        ", value=" +
+                                        measurementValue +
+                                        ")"
+                        );
+                    }
+
                     continue;
                 }
 
-                LocalDate date = parseLocalDate(r.getCell(7), fmt);
-                if (date == null) { skipped++; continue; }
+                WaterMeter waterMeter = waterMeterMap.get(waterMeterCode);
 
-                // 🧠 Check if measurement already exists
-                Set<LocalDate> existingDates = existingBywaterMeter.computeIfAbsent(waterMeterCode, k -> new HashSet<>());
+                if (waterMeter == null) {
+
+                    missingWaterMeter++;
+
+                    if (warnings.size() < WARNING_LIMIT) {
+                        warnings.add(
+                                "Row " + i +
+                                        " skipped: water meter NOT FOUND or INACTIVE (waterMeter=" +
+                                        waterMeterCode +
+                                        ")"
+                        );
+                    }
+
+                    if (missingWaterMeterCodes.size() < MISSING_LOG_LIMIT) {
+                        missingWaterMeterCodes.add(waterMeterCode);
+                    }
+
+                    continue;
+                }
+
+                String rawDate = fmt.formatCellValue(r.getCell(7)).trim();
+                LocalDate date = parseLocalDate(r.getCell(7), fmt);
+
+                if (date == null) {
+
+                    skippedBadDate++;
+
+                    if (warnings.size() < WARNING_LIMIT) {
+                        warnings.add(
+                                "Row " + i +
+                                        " skipped: INVALID DATE (waterMeter=" +
+                                        waterMeterCode +
+                                        ", rawDate=" +
+                                        rawDate +
+                                        ")"
+                        );
+                    }
+
+                    continue;
+                }
+
+                Set<LocalDate> existingDates =
+                        existingByWaterMeter.computeIfAbsent(
+                                waterMeterCode,
+                                k -> new HashSet<>()
+                        );
+
                 if (existingDates.contains(date)) {
+
                     duplicates++;
+                    
+
                     continue;
                 }
 
                 Double value = parseDouble(measurementValue);
-                if (value == null) value = (double) 0;
+
+                if (value == null) {
+
+                    skippedBadValue++;
+
+                    if (warnings.size() < WARNING_LIMIT) {
+                        warnings.add(
+                                "Row " + i +
+                                        " skipped: INVALID VALUE (waterMeter=" +
+                                        waterMeterCode +
+                                        ", value=" +
+                                        measurementValue +
+                                        ")"
+                        );
+                    }
+
+                    continue;
+                }
 
                 Measurement m = new Measurement();
                 m.setWaterMeter(waterMeter);
@@ -133,9 +234,9 @@ public class ImporterWaterService {
                 m.setCreatedBy("Monthly Import " + YearMonth.now());
 
                 buffer.add(m);
-                inserted++;
-                existingDates.add(date); // ✅ now safe
 
+                inserted++;
+                existingDates.add(date);
 
                 if (buffer.size() >= BATCH_SIZE) {
                     measurementRepository.saveAll(buffer);
@@ -147,12 +248,77 @@ public class ImporterWaterService {
                 measurementRepository.saveAll(buffer);
             }
 
-            log.info("Monthly import done: inserted={}, duplicates={}, missingwaterMeter={}, skipped={}",
-                    inserted, duplicates, missingwaterMeter, skipped);
+            if (missingWaterMeter > 0) {
+
+                if (!missingWaterMeterCodes.isEmpty()) {
+
+                    log.warn(
+                            "Missing water meters (not found or inactive). Count={}, showing up to {}: {}",
+                            missingWaterMeter,
+                            MISSING_LOG_LIMIT,
+                            String.join(", ", missingWaterMeterCodes)
+                    );
+
+                    if (missingWaterMeterCodes.size() == MISSING_LOG_LIMIT) {
+                        log.warn(
+                                "Missing water meters list truncated at {} items.",
+                                MISSING_LOG_LIMIT
+                        );
+                    }
+
+                } else {
+                    log.warn(
+                            "Missing water meters (not found or inactive). Count={}",
+                            missingWaterMeter
+                    );
+                }
+            }
+
+            if (warnings.size() == WARNING_LIMIT) {
+                log.warn(
+                        "Warnings truncated at {} rows.",
+                        WARNING_LIMIT
+                );
+            }
+
+            log.info(
+                    "Imported monthly water data: inserted={}, duplicates={}, missingWaterMeter={}, skippedEmpty={}, skippedBadDate={}, skippedBadValue={}",
+                    inserted,
+                    duplicates,
+                    missingWaterMeter,
+                    skippedEmpty,
+                    skippedBadDate,
+                    skippedBadValue
+            );
+
+            int skipped =
+                    skippedEmpty +
+                            skippedBadDate +
+                            skippedBadValue +
+                            duplicates;
+
+            return new DTO.ImportResult(
+                    "TECHEM",
+                    0,
+                    inserted,
+                    duplicates,
+                    missingWaterMeter,
+                    skipped,
+                    warnings
+            );
 
         } catch (Exception e) {
-            log.error("Monthly import failed: {}", e.getMessage(), e);
-            throw new RuntimeException("Monthly import failed", e);
+
+            log.error(
+                    "Monthly water import failed: {}",
+                    e.getMessage(),
+                    e
+            );
+
+            throw new RuntimeException(
+                    "Monthly water import failed: " + e.getMessage(),
+                    e
+            );
         }
     }
 

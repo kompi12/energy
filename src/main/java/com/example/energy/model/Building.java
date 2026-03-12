@@ -35,6 +35,11 @@ public class Building {
     @Column(length = 100)
     private String name;
 
+    @Column(name = "water")
+    private Boolean water = false;
+
+    @Column(name = "heat")
+    private Boolean heat = false;
 
     @Column(length = 100)
     private String techem;
